@@ -98,8 +98,12 @@ ordinal = mlflow.sklearn.load_model(f"runs:/{ORDINAL_RUN_ID}/model")
 # Desempenho final no teste interno reservado por vehicle_id.
 duration_col = "residual_time"
 event_col = "event_observed"
-train_survival = train[[*X_train.columns, duration_col, event_col]].copy()
-test_survival = internal_test[[*X_train.columns, duration_col, event_col]].copy()
+train_survival = X_train.copy()
+train_survival[duration_col] = train[duration_col].to_numpy()
+train_survival[event_col] = train[event_col].to_numpy()
+test_survival = X_internal_test.copy()
+test_survival[duration_col] = internal_test[duration_col].to_numpy()
+test_survival[event_col] = internal_test[event_col].to_numpy()
 times = supported_brier_times(train_survival, duration_col, event_col)
 
 km = fit_kaplan_meier(train[duration_col].to_numpy(), train[event_col].to_numpy())

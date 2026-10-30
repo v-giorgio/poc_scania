@@ -98,8 +98,12 @@ def log_context():
 # Baseline KM e Cox regularizado. Horizontes do IBS são calculados apenas no treino.
 duration_col = "residual_time"
 event_col = "event_observed"
-train_survival = train[[*X_train.columns, duration_col, event_col]].copy()
-validation_survival = validation[[*X_train.columns, duration_col, event_col]].copy()
+train_survival = X_train.copy()
+train_survival[duration_col] = train[duration_col].to_numpy()
+train_survival[event_col] = train[event_col].to_numpy()
+validation_survival = X_validation.copy()
+validation_survival[duration_col] = validation[duration_col].to_numpy()
+validation_survival[event_col] = validation[event_col].to_numpy()
 km = fit_kaplan_meier(train[duration_col].to_numpy(), train[event_col].to_numpy())
 
 
