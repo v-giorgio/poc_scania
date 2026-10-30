@@ -1,14 +1,15 @@
 # Especificação técnica — PoC de manutenção preditiva SCANIA Component X
 
-**Status:** proposta para validação durante a fase de entendimento dos dados  
-**Público:** Claude Code e revisores do projeto  
+**Status:** baseline implementada; execução Databricks ainda pendente
+
+**Público:** equipe e revisores do projeto
 **Idioma do projeto:** código e nomes técnicos em inglês; documentação explicativa em português, salvo decisão posterior.
 
 ## 1. Objetivo
 
 Construir uma prova de conceito reproduzível de manutenção preditiva para o Component X, usando o dataset SCANIA Component X associado ao desafio IDA 2024. A pergunta analítica principal é: **dadas as informações disponíveis até um instante de observação, qual é a distribuição do tempo até o primeiro reparo observado do Component X?**
 
-A abordagem principal será análise de sobrevivência, porque parte dos veículos pode não ter reparo observado até o fim do acompanhamento. A PoC também comparará, com ressalvas metodológicas explícitas, regressão de RUL e classificação ordinal inspirada nas classes do desafio. O resultado deve demonstrar um fluxo enxuto e auditável de S3 → Databricks/PySpark → Delta Lake → modelos → MLflow.
+A abordagem principal será análise de sobrevivência, porque parte dos veículos pode não ter reparo observado até o fim do acompanhamento. A PoC também compara, com ressalvas metodológicas explícitas, regressão de RUL e classificação ordinal inspirada nas classes do desafio. O fluxo pessoal implementado usa CSVs Raw em volume gerenciado do Unity Catalog → Databricks Free Edition serverless → tabelas Delta gerenciadas no Unity Catalog → modelos → MLflow.
 
 O uso pretendido é demonstrativo e exploratório. O conjunto não autoriza afirmar previsão de falha mecânica geral, diagnóstico causal, recomendação de segurança ou desempenho operacional em produção. O alvo deve ser referido como **tempo/unidades até reparo observado do Component X**, não como falha física, salvo se a documentação e os dados confirmarem essa equivalência.
 
@@ -43,7 +44,7 @@ As unidades temporais podem ter sido modificadas/anonimizadas pelo desafio. Não
 ### Incluído
 
 - Descoberta e validação dos CSVs e da documentação do desafio.
-- Ingestão de arquivos de origem em S3 (camada raw, imutável) e leitura/processamento em Databricks com PySpark.
+- Upload manual dos CSVs oficiais para um managed volume Raw do Unity Catalog, tratado como somente leitura após o upload, e leitura/processamento direto pelo Databricks com Spark.
 - Camadas Delta Bronze, Silver e Gold com contratos e validações explícitos.
 - Construção de exemplos de predição em um ou mais instantes por veículo, somente após validar a estrutura temporal e o desenho de risco.
 - Análise exploratória de eventos, censura, cobertura, desbalanceamento, qualidade e possível recorrência de reparos.
@@ -65,7 +66,7 @@ As unidades temporais podem ter sido modificadas/anonimizadas pelo desafio. Não
 
 **RF-02 Contrato de dados:** manter dicionário com nome original, tipo observado, significado documentado, regra de parsing, nulabilidade, domínio observado, proveniência e confiança. Distinguir “documentado” de “inferido”.
 
-**RF-03 Ingestão:** ler dados diretamente do caminho S3 configurado pelo usuário/ambiente, sem etapa local intermediária no fluxo pretendido. Persistir cópia Bronze em Delta com metadados de ingestão e rastreabilidade da origem. Ingestão deve ser reexecutável sem duplicar registros indevidamente.
+**RF-03 Ingestão:** ler os CSVs diretamente do caminho `RAW_VOLUME_PATH` (`/Volumes/<catalog>/<schema>/<volume>/raw`), sem etapa local intermediária no processamento. Persistir cada arquivo como tabela Bronze Delta gerenciada em `DATA_SCHEMA` (`<catalog>.<schema>`), registrando URI de origem, SHA-256, tamanho e horário de ingestão. Reexecuções sobrescrevem a tabela Bronze correspondente sem alterar os CSVs Raw.
 
 **RF-04 Qualidade:** validar schema, integridade de chaves, unicidade esperada, domínios, tempos, junções, contagens e proporção de nulos/sentinelas. Falhas críticas devem interromper a etapa dependente com mensagem acionável; não descartar linhas silenciosamente.
 
@@ -91,35 +92,35 @@ As unidades temporais podem ter sido modificadas/anonimizadas pelo desafio. Não
 - **Segurança:** credenciais por mecanismos nativos/secret scopes ou identidade gerenciada; princípio do menor privilégio; nenhum segredo persistido.
 - **Privacidade e minimização:** não replicar datasets grandes nem incluir registros brutos em relatórios, logs, testes versionados ou exemplos.
 - **Manutenibilidade:** módulos pequenos, configuração validada, logging útil, tipagem quando prática e erros explícitos.
-- **Custo:** execução por parâmetros e amostras apenas para exploração; documentar clusters e custo como itens a configurar, sem assumir tamanho ou preço.
+- **Custo:** execução pessoal na Free Edition, por parâmetros e amostras para exploração; documentar quotas e armazenamento adicional, sem assumir capacidade ou preço.
 - **Portabilidade:** lógica de negócio separada de paths/ambiente Databricks sempre que viável; diferenças locais/cloud documentadas.
 
 ## 8. Arquitetura lógica
 
 ```text
 CSV/documentação do desafio
-          │ upload/armazenamento controlado pelo usuário
+          │ upload manual dos oito CSVs oficiais
           ▼
-S3 raw (originais imutáveis, URI configurada)
-          │ leitura direta por Databricks/PySpark
+Unity Catalog managed volume Raw (somente leitura após upload)
+          │ Databricks serverless lê diretamente
           ▼
-Delta Bronze → Delta Silver → Delta Gold (snapshots de predição)
-                                      │
-                     split por veículo / corte temporal
-                                      │
-            baseline → sobrevivência → RUL → classificação ordinal
-                                      │
-                              MLflow tracking
-                                      │
-                relatório, artefatos e instruções de uso
+UC managed Delta Bronze → discovery/quality → Silver → Gold
+                                                     │
+                                    split por veículo / corte temporal
+                                                     │
+                           Kaplan–Meier / CoxPH / RUL / ordinal
+                                                     │
+                                             MLflow tracking
+                                                     │
+                              relatório, artefatos e instruções
 ```
 
-Bronze conserva o conteúdo e metadados de ingestão; Silver contém dados parseados/normalizados sem apagar origem ou mascarar decisões; Gold contém exemplos de modelagem e features aprovadas, com regras e versão documentadas. A organização física, catálogo, nomes e particionamento Delta devem ser escolhidos após inspeção do volume e do workspace. Não particionar automaticamente por identificador de alta cardinalidade.
+Bronze conserva o conteúdo e metadados de ingestão; Silver contém dados parseados/normalizados sem apagar origem ou mascarar decisões; Gold contém exemplos de modelagem e features aprovadas, com regras e versão documentadas. Bronze, Silver e Gold são tabelas gerenciadas do Unity Catalog, nomeadas `<catalog>.<schema>.<layer>_<artifact>` sob `DATA_SCHEMA`; não são particionadas por `vehicle_id`.
 
 ### Componentes sugeridos
 
-- **S3:** armazenamento raw; acesso direto pelo Databricks conforme suporte e permissões do workspace.
-- **Databricks + PySpark:** ingestão, validação, preparação e execução escalável.
+- **Unity Catalog managed volume:** armazenamento dos CSVs Raw; acesso via `RAW_VOLUME_PATH` e permissões UC.
+- **Databricks Free Edition + Spark:** ingestão, validação e preparação em compute serverless, sujeito às quotas da edição.
 - **Delta Lake:** persistência transacional das camadas e dados derivados.
 - **MLflow:** experiment tracking, parâmetros, métricas, artefatos e modelo; Model Registry é opcional.
 - **Python:** módulos reutilizáveis para contratos, validações, criação do split, avaliação e configuração.
@@ -224,7 +225,7 @@ Propor tabela de análise, unidade observacional e instante de predição; desen
 
 ### Fase 3 — pipeline de dados
 
-Implementar configuração sem segredos, leitor S3/Databricks, Delta Bronze/Silver/Gold, validações e reexecução idempotente. Começar por amostra controlada para validar lógica; executar escala completa apenas no ambiente configurado.
+Implementar configuração sem segredos, leitor de volume UC, tabelas Delta Bronze/Silver/Gold, validações e reexecução idempotente. Começar com um CSV via `SOURCE_FILE` para validar caminho e permissões; a ingestão completa e as etapas seguintes dependem do ambiente Databricks configurado e de suas quotas.
 
 ### Fase 4 — snapshots e split
 
@@ -264,7 +265,7 @@ Verificações obrigatórias antes de aceitar resultados:
 
 1. A documentação oficial e os CSVs disponíveis foram inspecionados; `data-discovery.md` e dicionário distinguem fatos, inferências e hipóteses, com perguntas abertas.
 2. O significado de evento, censura, unidade temporal, chaves e rótulos foi confirmado ou o projeto declara precisamente quais etapas estão bloqueadas.
-3. O pipeline proposto lê do S3 por Databricks/PySpark e escreve Bronze/Silver/Gold Delta, sem mover dados pesados para o computador local; execução cloud é reportada como realizada somente se ocorreu.
+3. O pipeline lê os CSVs do volume UC por Databricks/Spark e escreve tabelas UC gerenciadas Bronze/Silver/Gold, sem mover dados pesados para o computador local; execução no workspace só é reportada como realizada se ocorreu de fato.
 4. Construção de alvo trata censura à direita corretamente e não chama reparo observado de falha sem evidência.
 5. Split determinístico por veículo é comprovado por teste; não há leakage entre tempo de corte e features.
 6. Há resultados comparáveis de baseline e modelo de sobrevivência; benchmarks RUL e ordinal são incluídos apenas com limitações/regras descritas.

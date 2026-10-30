@@ -58,7 +58,7 @@ Os testes locais usam fixtures pequenas e não carregam os CSVs reais. Eles não
 
 Execute manualmente e de forma sequencial em compute serverless:
 
-1. `notebooks/03_data_preparation/01_ingest_raw.py`: informe `RAW_VOLUME_PATH` e `DATA_SCHEMA`. Para o smoke test inicial, informe um nome oficial em `SOURCE_FILE` (por exemplo `train_tte.csv`); deixe-o vazio para ingerir os oito CSVs. Antes de escrever, o notebook verifica a presença de todos os arquivos selecionados e cria as tabelas `bronze_<arquivo>`.
+1. `notebooks/03_data_preparation/01_ingest_raw.py`: informe `RAW_VOLUME_PATH` e `DATA_SCHEMA`. Para o smoke test inicial, informe um nome oficial em `SOURCE_FILE` (por exemplo `train_tte.csv`) e confirme que a tabela Bronze foi criada. Depois rode novamente com `SOURCE_FILE` vazio para ingerir os oito CSVs; as etapas seguintes precisam do conjunto completo de tabelas Bronze. Antes de escrever, o notebook verifica a presença de todos os arquivos selecionados e cria as tabelas `bronze_<arquivo>`.
 2. Rode `notebooks/02_data_understanding/01_data_exploration.py` e `02_data_quality.py`, informando `DATA_SCHEMA`, para perfilar e validar Bronze.
 3. `notebooks/03_data_preparation/02_silver_transform.py`: informe `DATA_SCHEMA`; cria tabelas `silver_<artefato>` após contratos e joins.
 4. `notebooks/03_data_preparation/03_gold_features.py`: informe `DATA_SCHEMA` e `SEED`; cria tabelas `gold_<partição>`.
