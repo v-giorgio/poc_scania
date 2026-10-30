@@ -9,7 +9,9 @@
 
 import mlflow
 
-EXPERIMENT_NAME = "/poc_scania/component_x"
+from src.scania_poc.tracking import personal_experiment_path
+
+EXPERIMENT_NAME = personal_experiment_path(spark)
 runs = mlflow.search_runs(
     experiment_names=[EXPERIMENT_NAME],
     order_by=["attributes.start_time DESC"],

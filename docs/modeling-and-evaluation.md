@@ -47,7 +47,7 @@ O IBS usa a fórmula IPCW: eventos até `t` ponderados por `1/G(T_i-)`, observa�
 
 ## MLflow e rastreabilidade
 
-Cada run registra seed, proporções, política do corte, caminhos e SHA-256 dos CSVs Raw que compõem Gold, revisão informada do código, versões Python/lifelines/scikit-learn/MLflow, parâmetros, métricas e artefatos de modelo/calibração. Configure `GIT_REVISION` com a revisão real; o valor `unknown` sinaliza ausência dela.
+Cada run registra seed, proporções, política do corte, caminhos e SHA-256 dos CSVs Raw que compõem Gold, revisão informada do código, versões Python/lifelines/scikit-learn/MLflow, parâmetros, métricas e artefatos de modelo/calibração. O experimento é criado sob a pasta pessoal do usuário atual no workspace (`/Users/<usuário>/poc_scania_component_x`), sem exigir uma pasta pai previamente criada. Configure `GIT_REVISION` com a revisão real; o valor `unknown` sinaliza ausência dela.
 
 ## Limitações
 

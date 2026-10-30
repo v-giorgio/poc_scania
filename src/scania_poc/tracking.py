@@ -7,12 +7,20 @@ import mlflow.sklearn
 import mlflow
 
 
+def personal_experiment_path(
+    spark: Any, experiment_name: str = "poc_scania_component_x"
+) -> str:
+    """Return a workspace experiment path under the current user's home folder."""
+    username = spark.sql("SELECT current_user()").first()[0]
+    return f"/Users/{username}/{experiment_name}"
+
+
 def log_survival_model(
     model: Any,
     metrics: dict[str, float],
     params: dict[str, Any],
     run_name: str,
-    experiment_name: str = "/poc_scania/survival",
+    experiment_name: str,
 ) -> str:
     """Loga um modelo de sobrevivência e suas métricas no MLflow.
 
@@ -33,7 +41,7 @@ def log_sklearn_model(
     metrics: dict[str, float],
     params: dict[str, Any],
     run_name: str,
-    experiment_name: str = "/poc_scania/benchmarks",
+    experiment_name: str,
     artifact_path: str = "model",
 ) -> str:
     """Loga um modelo scikit-learn e suas métricas no MLflow.
@@ -52,8 +60,8 @@ def log_sklearn_model(
 
 def log_evaluation_results(
     results: dict[str, dict[str, float]],
+    experiment_name: str,
     run_name: str = "evaluation_comparison",
-    experiment_name: str = "/poc_scania/evaluation",
 ) -> str:
     """Loga uma comparação entre múltiplos modelos como métricas prefixadas.
 

@@ -36,6 +36,7 @@ from src.scania_poc.survival import (
     supported_brier_times,
     survival_calibration,
 )
+from src.scania_poc.tracking import personal_experiment_path
 
 dbutils.widgets.text("DATA_SCHEMA", "", "Schema UC das tabelas gerenciadas")
 dbutils.widgets.text("SEED", "42", "Seed usada no split/snapshot")
@@ -43,7 +44,8 @@ dbutils.widgets.text("GIT_REVISION", "unknown", "Commit/revisão do código")
 DATA_SCHEMA = validate_data_schema(dbutils.widgets.get("DATA_SCHEMA").strip())
 SEED = int(dbutils.widgets.get("SEED"))
 GIT_REVISION = dbutils.widgets.get("GIT_REVISION").strip() or "unknown"
-mlflow.set_experiment("/poc_scania/component_x")
+EXPERIMENT_NAME = personal_experiment_path(spark)
+mlflow.set_experiment(EXPERIMENT_NAME)
 
 FEATURE_MODEL_COLS = [f"{col}_imputed" for col in FEATURE_COLS]
 SPEC_MODEL_COLS = [f"{col}_idx" for col in SPEC_COLS]

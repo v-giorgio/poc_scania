@@ -29,6 +29,7 @@ from src.scania_poc.survival import (
     supported_brier_times,
     survival_calibration,
 )
+from src.scania_poc.tracking import personal_experiment_path
 
 dbutils.widgets.text("DATA_SCHEMA", "", "Schema UC das tabelas gerenciadas")
 dbutils.widgets.text("COXPH_RUN_ID", "", "Run CoxPH previamente selecionado")
@@ -180,7 +181,8 @@ print("Official test labels unavailable; no supervised test metrics were compute
 
 # COMMAND ----------
 
-mlflow.set_experiment("/poc_scania/component_x")
+EXPERIMENT_NAME = personal_experiment_path(spark)
+mlflow.set_experiment(EXPERIMENT_NAME)
 with mlflow.start_run(run_name="final_reserved_evaluation"):
     mlflow.set_tag("evaluation_policy", "one-time internal test and official validation; no tuning")
     mlflow.log_params(
