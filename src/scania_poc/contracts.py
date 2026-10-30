@@ -16,8 +16,12 @@ import yaml
 
 from src.scania_poc.validators import missing_rate
 
+DEFAULT_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[2] / "config" / "data_contract.yaml"
+)
 
-def load_contract(contract_path: str | Path) -> dict[str, Any]:
+
+def load_contract(contract_path: str | Path = DEFAULT_CONTRACT_PATH) -> dict[str, Any]:
     """Carrega o contrato de dados do YAML."""
     with open(contract_path) as f:
         return yaml.safe_load(f)
@@ -53,7 +57,7 @@ def validate_uniqueness(df: Any, col: str) -> int:
 def validate_contract(
     df: Any,
     file_key: str,
-    contract_path: str | Path = "config/data_contract.yaml",
+    contract_path: str | Path = DEFAULT_CONTRACT_PATH,
 ) -> dict[str, list[str]]:
     """Valida um DataFrame PySpark contra o contrato do arquivo especificado.
 

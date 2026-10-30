@@ -7,7 +7,7 @@ lança QualityGateError se houver violações críticas.
 from pathlib import Path
 from typing import Any
 
-from src.scania_poc.contracts import validate_contract
+from src.scania_poc.contracts import DEFAULT_CONTRACT_PATH, validate_contract
 
 
 class QualityGateError(Exception):
@@ -17,7 +17,7 @@ class QualityGateError(Exception):
 def run_quality_gate(
     df: Any,
     file_key: str,
-    contract_path: str | Path = "config/data_contract.yaml",
+    contract_path: str | Path = DEFAULT_CONTRACT_PATH,
     *,
     raise_on_failure: bool = True,
 ) -> dict[str, list[str]]:
