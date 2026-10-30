@@ -14,7 +14,7 @@ O uso previsto é pessoal e não comercial. Localmente, o projeto executa testes
 Na raiz do repositório:
 
 ```powershell
-uv sync --dev
+uv sync --locked --extra dev
 uv run pytest tests/unit/ -v
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
