@@ -15,7 +15,7 @@ Consulte [docs/setup.md](docs/setup.md) para criar o volume, carregar os oito ar
 
 ## Dados e metodologia
 
-Use os arquivos e documentação do [dataset oficial SCANIA Component X](https://researchdata.se/en/catalogue/dataset/2024-34) e do [chamado IDA 2024](https://ida2024.blogs.dsv.su.se/industrial-challenge/). O pacote oficial não contém rótulos de teste. Consulte [SPEC.md](SPEC.md), [discovery](docs/data-discovery.md), [dicionário](docs/data-dictionary.md), [modelagem/avaliação](docs/modeling-and-evaluation.md) e [estado dos resultados](docs/experiment-results.md).
+Use os arquivos e documentação do [dataset oficial SCANIA Component X](https://researchdata.se/en/catalogue/dataset/2024-34), o artigo descritivo de Kharazian et al., [“SCANIA Component X dataset: a real-world multivariate time series dataset for predictive maintenance”](https://www.nature.com/articles/s41597-025-04802-6) (*Scientific Data*, 12, 493, 2025; [DOI: 10.1038/s41597-025-04802-6](https://doi.org/10.1038/s41597-025-04802-6)), e o [chamado IDA 2024](https://ida2024.blogs.dsv.su.se/industrial-challenge/). O pacote oficial não contém rótulos de teste. Consulte [SPEC.md](SPEC.md), [discovery](docs/data-discovery.md), [dicionário](docs/data-dictionary.md), [modelagem/avaliação](docs/modeling-and-evaluation.md) e [estado dos resultados](docs/experiment-results.md).
 
 ## Estrutura
 
