@@ -110,10 +110,10 @@ km = fit_kaplan_meier(train[duration_col].to_numpy(), train[event_col].to_numpy(
 
 
 class KaplanMeierAdapter:
-    def predict_survival_function(self, frame, horizons):
+    def predict_survival_function(self, frame, times):
         return pd.DataFrame(
-            [[float(km.predict(float(horizon)))] * len(frame) for horizon in horizons],
-            index=horizons,
+            [[float(km.predict(float(time)))] * len(frame) for time in times],
+            index=times,
             columns=frame.index,
         )
 
