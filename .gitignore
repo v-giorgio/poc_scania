@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.eggs/
+
+# Secrets e configurações locais
+.env
+*.local
+
+# Dados (nunca versionar datasets)
+data/
+*.csv
+*.parquet
+
+# MLflow artefatos locais
+mlruns/
+mlflow/mlruns/
+*.pkl
+*.joblib
+*.mlmodel
+
+# Databricks
+.databricks/
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Refs
+papers/
+dataset_local/
+
+# UV
+uv.lock

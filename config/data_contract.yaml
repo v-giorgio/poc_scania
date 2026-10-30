@@ -1,0 +1,126 @@
+# Contrato de Dados — SCANIA Component X (IDA 2024)
+# Gerado após inspeção dos CSVs em dataset_local/ (ver docs/data-discovery.md)
+# HIPÓTESES marcadas com [H] devem ser confirmadas via papers/2024_IDA_challenge_v2.pdf
+
+files:
+  train_tte:
+    description: >
+      Tabela de sobrevivência do treino. Uma linha por veículo.
+    required_columns:
+      vehicle_id:
+        dtype: int
+        nullable: false
+        unique: true
+      length_of_study_time_step:
+        dtype: float
+        nullable: false
+        min_value: 0.0
+        # [H] Todos os valores observados estão acima de 48 time_steps
+      in_study_repair:
+        dtype: int
+        nullable: false
+        allowed_values: [0, 1]
+        # 1 = reparo observado, 0 = censurado [H: confirmar com paper]
+    max_missing_rate: 0.0
+
+  train_specifications:
+    description: >
+      Especificações categóricas fixas por veículo. Uma linha por veículo.
+    required_columns:
+      vehicle_id:
+        dtype: int
+        nullable: false
+        unique: true
+      Spec_0:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_1:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_2:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_3:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_4:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_5:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_6:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+      Spec_7:
+        dtype: str
+        nullable: false
+        pattern: "^Cat\\d+$"
+    max_missing_rate: 0.0
+
+  train_operational_readouts:
+    description: >
+      Série temporal de leituras de sensores. Múltiplas linhas por veículo.
+    required_columns:
+      vehicle_id:
+        dtype: int
+        nullable: false
+      time_step:
+        dtype: float
+        nullable: false
+        min_value: 0.0
+    feature_columns:
+      dtype: float
+      # Missings são valores nulos reais (NaN), não string "na"
+      # Grupos com maior missing: 291 (~0.86%), 459 (~0.74%)
+      max_missing_rate_per_column: 0.02  # threshold conservador
+    max_missing_rate: 0.05  # < 1% observado; threshold com margem
+
+  validation_labels:
+    description: >
+      Rótulos ordinais por veículo — conjunto de validação.
+    required_columns:
+      vehicle_id:
+        dtype: int
+        nullable: false
+        unique: true
+      class_label:
+        dtype: int
+        nullable: false
+        allowed_values: [0, 1, 2, 3, 4]
+        # [H] Semântica: 0=sem reparo iminente (>48 steps), 4=reparo iminente (<=6 steps)
+        # Confirmar com papers/2024_IDA_challenge_v2.pdf antes de modelar
+    max_missing_rate: 0.0
+
+  test_labels:
+    description: >
+      Rótulos ordinais por veículo — conjunto de teste.
+    required_columns:
+      vehicle_id:
+        dtype: int
+        nullable: false
+        unique: true
+      class_label:
+        dtype: int
+        nullable: false
+        allowed_values: [0, 1, 2, 3, 4]
+    max_missing_rate: 0.0
+
+class_label_semantics:
+  # [H] HIPÓTESE — confirmar com paper oficial antes de usar em modelos
+  # A distribuição observada (classe 0 = 97%) sugere que 0 = sem urgência
+  # A hipótese alternativa (0=0-6, 4=48+) é possível mas improvável dado o desequilíbrio
+  description: "Classe ordinal de urgência de reparo do Componente X"
+  mapping_hypothesis:
+    0: "> 48 time_steps (ou censurado) — sem reparo iminente"
+    1: "24–48 time_steps"
+    2: "12–24 time_steps"
+    3: "6–12 time_steps"
+    4: "0–6 time_steps — reparo muito iminente"
