@@ -34,6 +34,14 @@ def test_contract_class_label_allowed_values():
     assert set(spec["allowed_values"]) == {0, 1, 2, 3, 4}
 
 
+def test_contract_uses_only_official_source_files():
+    contract = load_contract(CONTRACT_PATH)
+    assert "validation_labels" in contract["files"]
+    assert "test_labels" not in contract["files"]
+    assert "test_operational_readouts" in contract["files"]
+    assert contract["class_label_semantics"]["boundary_policy"].startswith("Unknown")
+
+
 class MockDF:
     """Imitação mínima de DataFrame para testar validações puras."""
 

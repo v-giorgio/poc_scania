@@ -1,24 +1,8 @@
-# Exemplo de configuração do Databricks Asset Bundle (DAB)
-# Documentação: https://docs.databricks.com/dev-tools/bundles/index.html
-# Copie, renomeie para databricks.yml e preencha. NUNCA commitar credenciais.
-
+# A Free Edition usa compute serverless e não cria clusters AWS via bundle.
+# Importe o repositório como Git Folder e rode os notebooks manualmente.
+# Se usar Databricks CLI para outros fins, copie o host do seu workspace aqui.
 bundle:
   name: poc_scania_michelin
 
 workspace:
-  host: https://<workspace>.azuredatabricks.net
-
-resources:
-  jobs:
-    batch_scoring:
-      name: poc-scania-batch-scoring
-      tasks:
-        - task_key: score
-          notebook_task:
-            notebook_path: notebooks/06_deployment/01_deployment_concept
-          new_cluster:
-            spark_version: "14.3.x-scala2.12"
-            node_type_id: i3.xlarge
-            num_workers: 1
-            aws_attributes:
-              availability: SPOT_WITH_FALLBACK
+  host: <workspace-host>

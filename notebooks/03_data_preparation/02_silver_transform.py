@@ -1,24 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 3.2 Transformação Silver — SCANIA Component X (IDA 2024)
+# MAGIC # 3.2 Validação e transformação das tabelas Bronze → Silver
 # MAGIC
-# MAGIC **Objetivo:** Transformar os dados Raw em Silver:
-# MAGIC - Casting correto de tipos (float para features, int para IDs/flags)
-# MAGIC - Missings já são nulos reais (NaN) — sem conversão de sentinel necessária
-# MAGIC - Join entre os três arquivos de treino por vehicle_id
-# MAGIC - Quality gate antes da escrita
-# MAGIC - Escrita em Delta Lake particionada
-# MAGIC
-# MAGIC **Inputs:** `s3://<S3_BUCKET>/raw/scania_component_x/`
-# MAGIC
-# MAGIC **Outputs:** `s3://<S3_BUCKET>/silver/component_x/` (Delta Lake)
+# MAGIC Lê somente Delta Bronze, conserva a linhagem da origem e interrompe a
+# MAGIC execução em falhas de contrato ou joins que alterem a cardinalidade.
+# MAGIC Nenhuma tabela é particionada por `vehicle_id`.
 
 # COMMAND ----------
 
 import pyspark.sql.functions as F
-from pyspark.sql.types import DoubleType, FloatType, IntegerType, StringType
+from pyspark.sql.types import DoubleType, IntegerType, StringType
 
-from src.scania_poc.quality import QualityGateError, run_quality_gate
+from src.scania_poc.contracts import validate_contract
+from src.scania_poc.config import qualified_table_name, validate_data_schema
 from src.scania_poc.schema import (
     EVENT_COL,
     FEATURE_COLS,
@@ -28,177 +22,134 @@ from src.scania_poc.schema import (
     VEHICLE_ID_COL,
 )
 
-dbutils.widgets.text("S3_BUCKET", "", "S3 Bucket name")
-S3_BUCKET = dbutils.widgets.get("S3_BUCKET")
-assert S3_BUCKET, "Defina o widget S3_BUCKET"
+dbutils.widgets.text("DATA_SCHEMA", "", "Schema UC das tabelas gerenciadas")
+DATA_SCHEMA = validate_data_schema(dbutils.widgets.get("DATA_SCHEMA").strip())
 
-RAW_PREFIX = f"s3://{S3_BUCKET}/raw/scania_component_x"
-SILVER_PREFIX = f"s3://{S3_BUCKET}/silver/component_x"
 
-# COMMAND ----------
+def load_bronze(name):
+    return spark.read.table(qualified_table_name(DATA_SCHEMA, "bronze", name))
 
-# MAGIC %md
-# MAGIC ## 1. Carregamento dos arquivos Raw
 
-# COMMAND ----------
+def write_silver(frame, name):
+    table = qualified_table_name(DATA_SCHEMA, "silver", name)
+    (
+        frame.write.format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .saveAsTable(table)
+    )
 
-tte_raw = spark.read.csv(f"{RAW_PREFIX}/train_tte.csv", header=True, inferSchema=True)
-specs_raw = spark.read.csv(f"{RAW_PREFIX}/train_specifications.csv", header=True, inferSchema=True)
-readouts_raw = spark.read.csv(
-    f"{RAW_PREFIX}/train_operational_readouts.csv", header=True, inferSchema=True
-)
 
-print(f"TTE: {tte_raw.count():,} linhas")
-print(f"Specs: {specs_raw.count():,} linhas")
-print(f"Readouts: {readouts_raw.count():,} linhas")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 2. Quality gate nos dados Raw
-
-# COMMAND ----------
-
-for df, key in [(tte_raw, "train_tte"), (specs_raw, "train_specifications")]:
-    violations = run_quality_gate(df, key, raise_on_failure=False)
+def enforce_contract(df, key):
+    violations = validate_contract(df, key)
     if violations:
-        print(f"⚠ {key}: {violations}")
-    else:
-        print(f"✓ {key}: quality gate OK")
+        raise ValueError(f"Contrato {key} falhou: {violations}")
+
+
+def assert_same_ids(left, right, key, name):
+    left_ids = left.select(key).distinct()
+    right_ids = right.select(key).distinct()
+    left_only = left_ids.join(right_ids, on=key, how="left_anti").limit(1).count()
+    right_only = right_ids.join(left_ids, on=key, how="left_anti").limit(1).count()
+    if left_only or right_only:
+        raise ValueError(f"IDs divergentes em {name}: left_only={left_only}, right_only={right_only}")
+
+
+def check_join(left, right, key, name):
+    if left.groupBy(key).count().filter(F.col("count") > 1).limit(1).count():
+        raise ValueError(f"Chave duplicada no lado esquerdo do join {name}")
+    if right.groupBy(key).count().filter(F.col("count") > 1).limit(1).count():
+        raise ValueError(f"Chave duplicada no lado direito do join {name}")
+    assert_same_ids(left, right, key, name)
+    joined = left.join(right, on=key, how="inner")
+    if joined.count() != left.count() or joined.count() != right.count():
+        raise ValueError(f"Join {name} perdeu ou multiplicou veículos")
+    return joined
+
+
+def cast_readouts(df):
+    cast_features = [
+        F.when(
+            F.isnan(F.col(c).cast(DoubleType())),
+            F.lit(None).cast(DoubleType()),
+        )
+        .otherwise(F.col(c).cast(DoubleType()))
+        .alias(c)
+        for c in FEATURE_COLS
+    ]
+    typed = df.select(
+        F.col(VEHICLE_ID_COL).cast(IntegerType()).alias(VEHICLE_ID_COL),
+        F.col(TIME_STEP_COL).cast(DoubleType()).alias(TIME_STEP_COL),
+        *cast_features,
+        F.col("_source_uri"),
+        F.col("_source_version"),
+        F.col("_ingested_at"),
+    )
+    if typed.filter(F.col(VEHICLE_ID_COL).isNull() | F.col(TIME_STEP_COL).isNull()).limit(1).count():
+        raise ValueError("Falha de parsing em vehicle_id/time_step")
+    return typed
+
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## 3. Casting e limpeza — train_tte
-
-# COMMAND ----------
-
-tte_silver = tte_raw.select(
-    F.col(VEHICLE_ID_COL).cast(IntegerType()),
-    F.col(TTE_COL).cast(DoubleType()),
-    F.col(EVENT_COL).cast(IntegerType()),
+tte_raw = load_bronze("train_tte")
+specs_raw = load_bronze("train_specifications")
+tte = tte_raw.select(
+    F.col(VEHICLE_ID_COL).cast(IntegerType()).alias(VEHICLE_ID_COL),
+    F.col(TTE_COL).cast(DoubleType()).alias(TTE_COL),
+    F.col(EVENT_COL).cast(IntegerType()).alias(EVENT_COL),
+    F.col("_source_uri").alias("_tte_source_uri"),
+    F.col("_source_version").alias("_tte_source_version"),
 )
-
-# Verificação: sem nulos após cast
-assert tte_silver.filter(F.col(VEHICLE_ID_COL).isNull()).count() == 0
-assert tte_silver.filter(F.col(TTE_COL).isNull()).count() == 0
-assert tte_silver.filter(F.col(EVENT_COL).isNull()).count() == 0
-print("✓ TTE silver: sem nulos")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Casting e limpeza — train_specifications
-
-# COMMAND ----------
-
-specs_silver = specs_raw.select(
-    F.col(VEHICLE_ID_COL).cast(IntegerType()),
-    *[F.col(c).cast(StringType()) for c in SPEC_COLS],
+specs = specs_raw.select(
+    F.col(VEHICLE_ID_COL).cast(IntegerType()).alias(VEHICLE_ID_COL),
+    *[F.col(c).cast(StringType()).alias(c) for c in SPEC_COLS],
+    F.col("_source_uri").alias("_specs_source_uri"),
+    F.col("_source_version").alias("_specs_source_version"),
 )
-print("✓ Specifications silver: OK")
+enforce_contract(tte, "train_tte")
+enforce_contract(specs, "train_specifications")
+vehicles = check_join(tte, specs, VEHICLE_ID_COL, "train TTE + specifications")
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 5. Casting e limpeza — train_operational_readouts
-
-# COMMAND ----------
-
-readouts_silver = readouts_raw.select(
-    F.col(VEHICLE_ID_COL).cast(IntegerType()),
-    F.col(TIME_STEP_COL).cast(DoubleType()),
-    *[F.col(c).cast(DoubleType()) for c in FEATURE_COLS],
-)
-
-null_check = readouts_silver.filter(
-    F.col(VEHICLE_ID_COL).isNull() | F.col(TIME_STEP_COL).isNull()
-).count()
-assert null_check == 0, f"Nulos em colunas de identidade após cast: {null_check}"
-print(f"✓ Readouts silver: {readouts_silver.count():,} linhas, sem nulos em vehicle_id/time_step")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 6. Join: TTE + Specs (tabela de veículos silver)
-
-# COMMAND ----------
-
-vehicle_silver = tte_silver.join(specs_silver, on=VEHICLE_ID_COL, how="inner")
-assert vehicle_silver.count() == tte_silver.count(), "Join perdeu veículos"
-print(f"✓ Vehicle silver (TTE + Specs): {vehicle_silver.count():,} veículos")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 7. Escrita em Delta Lake
-
-# COMMAND ----------
-
-vehicle_silver.write.format("delta").mode("overwrite").save(f"{SILVER_PREFIX}/vehicles")
-print(f"✓ Escrito: {SILVER_PREFIX}/vehicles")
-
-readouts_silver.write.format("delta").mode("overwrite").partitionBy(
-    VEHICLE_ID_COL
-).save(f"{SILVER_PREFIX}/readouts")
-print(f"✓ Escrito: {SILVER_PREFIX}/readouts (particionado por vehicle_id)")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 8. Processar validação e teste
-
-# COMMAND ----------
-
-for split in ["validation", "test"]:
-    labels_raw = spark.read.csv(
-        f"{RAW_PREFIX}/{split}_labels.csv", header=True, inferSchema=True
+for name, contract_key in [
+    ("train_operational_readouts", "train_operational_readouts"),
+    ("validation_operational_readouts", "validation_operational_readouts"),
+    ("test_operational_readouts", "test_operational_readouts"),
+]:
+    readouts = cast_readouts(load_bronze(name))
+    enforce_contract(readouts, contract_key)
+    if name == "train_operational_readouts":
+        assert_same_ids(readouts, vehicles, VEHICLE_ID_COL, name)
+    readouts = readouts.withColumnRenamed("_source_uri", "_readouts_source_uri").withColumnRenamed(
+        "_source_version", "_readouts_source_version"
     )
-    specs_split = spark.read.csv(
-        f"{RAW_PREFIX}/{split}_specifications.csv", header=True, inferSchema=True
-    )
-    readouts_split = spark.read.csv(
-        f"{RAW_PREFIX}/{split}_operational_readouts.csv", header=True, inferSchema=True
-    )
+    write_silver(readouts, name)
 
-    labels_silver = labels_split = labels_raw.select(
-        F.col(VEHICLE_ID_COL).cast(IntegerType()),
-        F.col("class_label").cast(IntegerType()),
-    )
-    readouts_split_silver = readouts_split.select(
-        F.col(VEHICLE_ID_COL).cast(IntegerType()),
-        F.col(TIME_STEP_COL).cast(DoubleType()),
-        *[F.col(c).cast(DoubleType()) for c in FEATURE_COLS],
-    )
-    specs_split_silver = specs_split.select(
-        F.col(VEHICLE_ID_COL).cast(IntegerType()),
-        *[F.col(c).cast(StringType()) for c in SPEC_COLS],
-    )
+write_silver(vehicles, "train_vehicles")
 
-    labels_silver.write.format("delta").mode("overwrite").save(
-        f"{SILVER_PREFIX}/{split}/labels"
+for split in ("validation", "test"):
+    split_specs = load_bronze(f"{split}_specifications").select(
+        F.col(VEHICLE_ID_COL).cast(IntegerType()).alias(VEHICLE_ID_COL),
+        *[F.col(c).cast(StringType()).alias(c) for c in SPEC_COLS],
+        F.col("_source_uri").alias("_specs_source_uri"),
+        F.col("_source_version").alias("_specs_source_version"),
     )
-    readouts_split_silver.write.format("delta").mode("overwrite").partitionBy(
-        VEHICLE_ID_COL
-    ).save(f"{SILVER_PREFIX}/{split}/readouts")
-    specs_split_silver.write.format("delta").mode("overwrite").save(
-        f"{SILVER_PREFIX}/{split}/specs"
+    enforce_contract(split_specs, f"{split}_specifications")
+    split_readouts = spark.read.table(
+        qualified_table_name(DATA_SCHEMA, "silver", f"{split}_operational_readouts")
     )
-    print(f"✓ {split}: labels + readouts + specs escritos em Silver")
+    assert_same_ids(split_specs, split_readouts, VEHICLE_ID_COL, f"{split} specs + readouts")
+    write_silver(split_specs, f"{split}_specifications")
 
-# COMMAND ----------
+    if split == "validation":
+        labels = load_bronze("validation_labels").select(
+            F.col(VEHICLE_ID_COL).cast(IntegerType()).alias(VEHICLE_ID_COL),
+            F.col("class_label").cast(IntegerType()).alias("class_label"),
+            F.col("_source_uri").alias("_labels_source_uri"),
+            F.col("_source_version").alias("_labels_source_version"),
+        )
+        enforce_contract(labels, "validation_labels")
+        assert_same_ids(labels, split_specs, VEHICLE_ID_COL, "validation labels + specs")
+        write_silver(labels, "validation_labels")
 
-# MAGIC %md
-# MAGIC ## 9. Resumo
-
-# COMMAND ----------
-
-print("=" * 60)
-print("SILVER CONCLUÍDO")
-print("=" * 60)
-print(f"  {SILVER_PREFIX}/vehicles      — TTE + specs de treino")
-print(f"  {SILVER_PREFIX}/readouts      — leituras de treino (Delta particionado)")
-print(f"  {SILVER_PREFIX}/validation/   — labels + readouts + specs de validação")
-print(f"  {SILVER_PREFIX}/test/         — labels + readouts + specs de teste")
-print()
-print("Próximo passo: 03_gold_features.py")
+print("Silver criado com contratos e linhagem. Nenhum rótulo de teste foi carregado.")

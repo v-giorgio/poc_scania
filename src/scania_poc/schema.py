@@ -43,17 +43,19 @@ EVENT_COL = "in_study_repair"
 # --- train_specifications.csv ---
 SPEC_COLS: list[str] = [f"Spec_{i}" for i in range(8)]
 
-# --- validation_labels.csv / test_labels.csv ---
+# --- validation_labels.csv ---
 CLASS_LABEL_COL = "class_label"
 
-# Classes ordinais IDA 2024 — limites em time_steps (unidade anonimizada)
-# Fonte: papers/2024_IDA_challenge_v2.pdf (transcrever regra exata após leitura)
+# As janelas de classes 1–4 estão documentadas na chamada oficial IDA 2024.
+# Inclusão das fronteiras não está especificada; o binner as deixa sem classe.
 ORDINAL_CLASSES: dict[int, tuple[float, float]] = {
-    0: (0.0, 6.0),
-    1: (6.0, 12.0),
+    0: (48.0, float("inf")),
+    1: (24.0, 48.0),
     2: (12.0, 24.0),
-    3: (24.0, 48.0),
-    4: (48.0, float("inf")),
+    3: (6.0, 12.0),
+    4: (0.0, 6.0),
 }
 
+ORDINAL_HORIZON = 48.0
+UNKNOWN_ORDINAL_CLASS = -1
 N_ORDINAL_CLASSES = 5

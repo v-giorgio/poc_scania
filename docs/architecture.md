@@ -1,49 +1,44 @@
 # Arquitetura da PoC
 
-## Visão Geral
+## Fluxo lógico
 
+```text
+CSVs oficiais em Unity Catalog managed volume (Raw; somente leitura após upload)
+        ↓ leitura direta pelo Databricks serverless
+Tabelas UC Bronze Delta: bronze_<arquivo> + caminho/SHA-256/tamanho/horário
+        ↓ cast + contratos + integridade de joins
+Tabelas UC Silver Delta: silver_<artefato>
+        ↓ split por veículo → corte temporal → transformações ajustadas no treino
+Tabelas UC Gold Delta: gold_train_fit / gold_internal_validation / gold_internal_test
+                     gold_challenge_validation / gold_challenge_test
+        ↓ Kaplan–Meier / CoxPH / RUL eventos / ordinal conhecido
+MLflow gerenciado pelo workspace: parâmetros, métricas e artefatos
 ```
-[Dataset SCANIA] → [S3 Raw] → [Databricks Ingest] → [S3 Silver / Delta Lake]
-                                                    → [S3 Gold / Delta Lake]
-                                                    → [MLflow Tracking]
-                                                    → [MLflow Model Registry]
-```
 
-## Camadas de Dados
+## Camadas e reexecução
 
-| Camada | Localização S3 | Formato | Descrição |
-|--------|---------------|---------|-----------|
-| Raw    | `raw/scania_component_x/`      | CSV original  | Ingestão sem transformações |
-| Silver | `silver/component_x/`          | Delta Lake    | Limpeza, tipagem, particionamento |
-| Gold   | `gold/features_predictive/`    | Delta Lake    | Features prontas para modelagem |
+| Camada | Conteúdo | Regra |
+|---|---|---|
+| Volume Raw | CSVs originais enviados ao diretório `/raw` do volume gerenciado | Imutável por convenção depois do upload; pipeline não modifica a origem. |
+| Bronze UC/Delta | Uma tabela por arquivo com `_source_uri`, `_source_version` (SHA-256), `_source_size_bytes` e `_ingested_at` | Ingestão sobrescreve a tabela gerenciada por arquivo em vez de anexar duplicatas. |
+| Silver UC/Delta | Tipos validados, dados normalizados e linhagem da fonte | Quality gate interrompe a execução em violações críticas; sem partição por identificador de alta cardinalidade. |
+| Gold UC/Delta | Snapshots por veículo, corte, alvos residuais identificáveis, features e hashes das fontes | Split por veículo primeiro; imputação/indexação ajustada somente em `train_fit`. |
 
-## Componentes
+As tabelas seguem o padrão `<catalog>.<schema>.<layer>_<artifact>`, por exemplo `main.default.bronze_train_tte` e `main.default.gold_train_fit`. O catálogo e schema são configurados em `DATA_SCHEMA`; o caminho Raw em `RAW_VOLUME_PATH`.
 
-### AWS S3
-- Armazenamento durável e barato para todas as camadas
-- Sem estrutura local para dados — tudo no S3
-- Políticas IAM controlam acesso por camada
+## Alvo, cortes e avaliação
 
-### Databricks
-- Notebooks organizados por etapa CRISP-DM em `notebooks/`
-- Código reutilizável de `src/` instalado como wheel ou via `%run`
-- MLflow integrado nativamente ao workspace Databricks
-- Cluster Spark para processamento distribuído com PySpark
+O alvo principal é o tempo residual até o primeiro reparo observado do Component X, com censura à direita preservada. Em treino é escolhida uma leitura pseudoaleatória determinística por veículo, entre leituras estritamente anteriores ao tempo de evento/fim de acompanhamento. O snapshot não inclui TTE absoluto nem a flag de evento como feature.
 
-### Delta Lake
-- ACID sobre S3
-- Schema enforcement e evolução controlada
-- Time travel para auditoria e reprodutibilidade
+As leituras oficiais de validação/teste já terminam no corte aleatório do desafio. Validação traz `class_label` e é usada somente na avaliação final; teste não traz rótulo e não recebe métrica supervisionada.
 
-### MLflow
-- Experimentos organizados por etapa de modelagem
-- Métricas: AUC-ROC, custo total (10*FP + 500*FN)
-- Model Registry para versionamento conceitual do melhor modelo
+## Componentes e ambiente
 
-### Python Local (`src/`)
-- Módulos reutilizáveis com testes unitários
-- Sem dependência de Spark para funções puras
-- `scripts/` para automação pontual (download, validação)
+- **Databricks Free Edition serverless:** execução pessoal/não comercial, sem cluster AWS configurado pelo usuário; compute sujeito a quotas.
+- **Unity Catalog managed volume:** armazenamento Raw acessado por caminho absoluto `/Volumes/...`.
+- **Tabelas UC/Delta:** Bronze, Silver e Gold gerenciadas no schema configurado; sem paths S3.
+- **lifelines / scikit-learn:** benchmarks de sobrevivência, RUL e classificação ordinal sobre Gold compacto.
+- **MLflow:** parâmetros, hashes de origem, revisão de código, métricas e artefatos no workspace.
+- **Ambiente local:** testes unitários/sintéticos, helpers puros, lint e checagem de estrutura; não simula a execução do workspace.
 
-## Decisões de Arquitetura
-Ver `docs/decisions/` para ADRs detalhados.
+Consulte [setup](setup.md), [modelagem e avaliação](modeling-and-evaluation.md) e [resultados](experiment-results.md). Para os limites da Free Edition e o uso com ~1,5 GB, veja [setup](setup.md).

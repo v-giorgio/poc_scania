@@ -1,65 +1,80 @@
-# Setup local e execução
+# Setup local e execução na Databricks Free Edition
 
-Este guia cobre o ambiente Python local e descreve o que é necessário para usar os notebooks no Databricks. No estado atual do repositório, **não há um comando local que execute o pipeline completo**: ingestão, transformações Delta e notebooks dependem de Spark/Databricks e de recursos cloud configurados.
+O uso previsto é pessoal e não comercial. Localmente, o projeto executa testes sintéticos, lint e validação estrutural. O processamento dos CSVs ocorre na Databricks Free Edition usando compute serverless e armazenamento gerenciado pelo Unity Catalog; não é necessário criar conta AWS, bucket S3 ou cluster próprio.
 
 ## Pré-requisitos
 
-- Windows, macOS ou Linux.
-- Python 3.11 ou superior.
-- Git.
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) para criar o ambiente e instalar as dependências travadas em `uv.lock`.
+- Conta Databricks Free Edition e um workspace com Unity Catalog/compute serverless.
+- Repositório importado como **Git Folder**.
+- Os oito CSVs oficiais disponíveis localmente para upload. O conjunto observado totaliza cerca de 1,5 GB e cada arquivo é menor que o limite documentado de 5 GB por arquivo da [interface de upload de volumes](https://docs.databricks.com/aws/en/volumes/volume-files).
+- Ambiente serverless configurado com as dependências Python listadas em `pyproject.toml` (incluindo `lifelines`, `scikit-learn` e `PyYAML`). Use a versão serverless 4 ou mais recente, que inclui Spark ML. Não instale PySpark: ele já é fornecido pelo runtime.
 
-AWS e Databricks não são necessários para instalar o ambiente Python ou rodar os testes unitários. São necessários para executar o fluxo cloud.
+## Verificações locais — PowerShell
 
-## Instalação local (PowerShell)
-
-Abra o PowerShell na pasta do repositório:
+Na raiz do repositório:
 
 ```powershell
 uv sync --dev
-uv run python --version
-```
-
-`uv sync --dev` instala as dependências de `pyproject.toml` e cria/atualiza `.venv` usando `uv.lock`. Se `uv` não estiver instalado, siga o guia de instalação oficial acima e reabra o terminal.
-
-## Verificações locais
-
-```powershell
 uv run pytest tests/unit/ -v
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
+uv run python scripts/validate_structure.py
 ```
 
-Para formatar arquivos depois de uma edição, remova `--check` de `ruff format`. O script `scripts/validate_structure.sh` ainda valida caminhos de uma estrutura antiga (`src/data/` e outros); não o use como verificação de validade desta versão do projeto.
+Os testes locais usam fixtures pequenas e não carregam os CSVs reais. Eles não validam Spark, Delta, quotas ou o acesso ao volume do workspace.
 
-Os módulos de discovery e qualidade que recebem DataFrames Spark e os notebooks Databricks não são executados por esses comandos locais. `pyspark` não está declarado como dependência do projeto.
+## Preparar volume e tabelas
 
-## Dados locais
+1. No workspace, abra **Catalog**. Pense na hierarquia como: **catálogo → schema → tabelas/volumes**. Se sua conta mostrar `main` e `default`, você pode usar esses nomes; caso contrário, escolha os que aparecem no seu Catalog Explorer.
+2. Dentro do schema escolhido, crie um **managed volume** pelo botão **Create > Volume**, com o nome `component_x`. Um volume é a pasta de arquivos Raw que o Spark vai ler; o schema também receberá as tabelas Delta produzidas pelo pipeline.
+3. Abra o volume, crie uma pasta `raw` e envie os oito CSVs oficiais abaixo para ela. A interface aceita até 5 GB por arquivo; os arquivos Delta derivados ocuparão espaço adicional. Depois da ingestão, trate `raw/` como somente leitura.
 
-Os CSVs e PDFs não são instalados por `uv` nem devem ser commitados. Se você já recebeu os arquivos, mantenha os CSVs em `dataset_local/` e a documentação oficial em `papers/`, conforme as exclusões do `.gitignore`. Um clone novo pode não conter essas pastas; obtenha os arquivos pela página oficial do [dataset SCANIA Component X](https://researchdata.se/en/catalogue/dataset/2024-34) e pelo [chamado IDA 2024](https://ida2024.blogs.dsv.su.se/industrial-challenge/), respeitando os termos de uso.
+   - `train_tte.csv`
+   - `train_operational_readouts.csv`
+   - `train_specifications.csv`
+   - `validation_labels.csv`
+   - `validation_operational_readouts.csv`
+   - `validation_specifications.csv`
+   - `test_operational_readouts.csv`
+   - `test_specifications.csv`
 
-O script `scripts/download_dataset.sh` não baixa o dataset Component X: ele descreve o antigo conjunto APS Failure e usa nomes de arquivos diferentes. Não o use para preparar os dados desta PoC. Também não presuma que `test_labels.csv` pertence ao pacote oficial; confira a lista de arquivos e a documentação de origem antes de usá-lo.
+   Não carregue `test_labels.csv`: esse arquivo não faz parte do pacote oficial.
 
-## Execução no Databricks/AWS
+4. Entenda e anote os dois valores que os notebooks vão pedir:
 
-O fluxo cloud é uma execução separada do ambiente local. Para executá-lo, configure por conta própria:
+   - `RAW_VOLUME_PATH` é o caminho até a pasta `raw` dentro do volume. Exemplo: `/Volumes/main/default/component_x/raw`.
+   - `DATA_SCHEMA` é só `<catalog>.<schema>`, sem o volume e sem `/raw`. Exemplo: `main.default`.
 
-- Um workspace Databricks com cluster Spark/Delta e permissões de leitura e escrita no S3.
-- Um bucket S3 e os caminhos de origem dos CSVs, usando a identidade/perfil AWS ou o mecanismo de credenciais aprovado no workspace.
-- Os notebooks deste repositório e o pacote `src/` disponíveis no workspace. Os notebooks importam `src.scania_poc`; essa distribuição ainda precisa ser feita/configurada no Databricks.
+   Nesse exemplo, uma tabela Bronze será chamada `main.default.bronze_train_tte`. O caminho do volume é para ler os CSVs; `DATA_SCHEMA` diz onde criar as tabelas Delta.
 
-Não há bucket, workspace, região ou credenciais padrão. Não coloque tokens, chaves ou segredos em arquivos rastreados pelo Git. O arquivo `config/dev.env.example` é apenas um exemplo de nomes de variáveis: a aplicação não carrega `.env` automaticamente e o valor de bucket nele é ilustrativo. Para uma sessão PowerShell, uma variável pode ser definida temporariamente assim:
+   O Unity Catalog controla permissões separadas: para ler os CSVs, o usuário precisa de `USE CATALOG`, `USE SCHEMA` e `READ VOLUME` no volume. Para criar as tabelas, precisa de `CREATE TABLE` no schema. Para sobrescrever tabelas já existentes, precisa de `MODIFY` nelas; normalmente o usuário que criou as tabelas é seu proprietário e já pode modificá-las. Se a conta bloquear alguma ação, peça ao proprietário do catálogo/schema para conceder o privilégio correspondente. [Referência de privilégios UC](https://docs.databricks.com/aws/en/data-governance/unity-catalog/access-control/privileges-reference).
+5. Adicione o repositório ao workspace como **Git Folder**: na barra lateral abra **Workspace**, selecione sua pasta pessoal e escolha **Create > Git folder**. Informe a URL do repositório e autentique-se no provedor Git se solicitado. Depois, os notebooks e a pasta `src/` do projeto ficam acessíveis nessa pasta. [Como criar Git Folders](https://docs.databricks.com/aws/en/repos/git-operations-with-repos).
 
-```powershell
-$env:S3_BUCKET = "<bucket-configurado-por-voce>"
-```
+   Abra um notebook do projeto nessa Git Folder e selecione compute **Serverless**. Abra o painel lateral **Environment**, escolha o ambiente-base e adicione as dependências Python que faltarem, conforme `pyproject.toml`; depois clique **Apply**. Isso instala as bibliotecas e reinicia a sessão Python. Faça a configuração nos notebooks que precisam dessas bibliotecas, a menos que seu workspace ofereça um ambiente serverless compartilhado. **Não instale PySpark**: ele já vem no compute.
 
-Os notebooks usam widgets Databricks para `S3_BUCKET` e `SOURCE_PATH`; revise cada notebook e seus pré-requisitos antes de executar. Faça primeiro uma execução pequena e controlada no ambiente autorizado. A execução cloud não foi comprovada por este setup.
+   A raiz da Git Folder contém `src/`, então os imports do projeto, como `from src.scania_poc...`, vêm dali. Se adicionar uma biblioteca ou arquivo do workspace como dependência, use o caminho absoluto começando com `/Workspace/`; para os dados use o caminho `/Volumes/...`. [Dependências do compute serverless](https://docs.databricks.com/aws/en/compute/serverless/dependencies).
 
-## Limitações atuais
+## Ordem de execução
 
-- `pyproject.toml` não inclui PySpark nem define um comando CLI para executar discovery ou o pipeline localmente.
-- Os notebooks são protótipos para Databricks e algumas etapas ainda não atendem à metodologia de `SPEC.md`; em particular, o Gold usa a última leitura de treino sem validar se ela ocorre antes do evento e as etapas de modelagem não implementam ainda um protocolo completo de treino/avaliação.
-- O contrato de dados, relatórios de discovery e dicionário contêm hipóteses/contagens que precisam ser reconciliadas com os CSVs e a documentação oficial antes de interpretar métricas.
+Execute manualmente e de forma sequencial em compute serverless:
 
-Consulte [SPEC.md](../SPEC.md), [data discovery](data-discovery.md) e [arquitetura](architecture.md) antes de interpretar os resultados ou iniciar uma execução cloud.
+1. `notebooks/03_data_preparation/01_ingest_raw.py`: informe `RAW_VOLUME_PATH` e `DATA_SCHEMA`. Para o smoke test inicial, informe um nome oficial em `SOURCE_FILE` (por exemplo `train_tte.csv`); deixe-o vazio para ingerir os oito CSVs. Antes de escrever, o notebook verifica a presença de todos os arquivos selecionados e cria as tabelas `bronze_<arquivo>`.
+2. Rode `notebooks/02_data_understanding/01_data_exploration.py` e `02_data_quality.py`, informando `DATA_SCHEMA`, para perfilar e validar Bronze.
+3. `notebooks/03_data_preparation/02_silver_transform.py`: informe `DATA_SCHEMA`; cria tabelas `silver_<artefato>` após contratos e joins.
+4. `notebooks/03_data_preparation/03_gold_features.py`: informe `DATA_SCHEMA` e `SEED`; cria tabelas `gold_<partição>`.
+5. `notebooks/04_modeling/01_baseline_model.py`: informe `DATA_SCHEMA`, `SEED` e `GIT_REVISION`. Registre os IDs MLflow impressos para CoxPH, RUL e ordinal.
+6. `notebooks/05_evaluation/01_model_evaluation.py`: informe `DATA_SCHEMA` e os três run IDs para avaliar o teste interno reservado e, uma vez, os rótulos oficiais da validação.
+
+Discovery e quality checks leem tabelas Bronze; portanto, rode-os após a ingestão. O fluxo não usa rótulos oficiais do teste. Os notebooks escrevem Delta como tabelas Unity Catalog gerenciadas, sem particionar por `vehicle_id`.
+
+## Linhagem e reexecução
+
+Bronze registra caminho absoluto do CSV no volume, SHA-256 do conteúdo, tamanho em bytes e horário de ingestão. Cada tabela Bronze é sobrescrita de forma idempotente em uma nova execução; os CSVs Raw permanecem intactos. Silver e Gold também substituem suas tabelas gerenciadas correspondentes.
+
+## Limites e diagnóstico
+
+- Free Edition oferece compute serverless limitado por quotas de uso. Ao ultrapassar a quota, o compute pode ficar indisponível até a renovação ([limitações oficiais](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations)); execute um notebook por vez e confira os outputs após cada camada.
+- Os 1,5 GB são apenas os arquivos Raw. Bronze e Silver materializam dados e ocupam armazenamento adicional; não há garantia de que uma execução completa caiba na quota de compute/armazenamento da conta.
+- Se a quota interromper a execução, os CSVs Raw e tabelas já gravadas permanecem; reexecute o notebook da etapa incompleta. A ingestão sobrescreve cada tabela Bronze, sem anexar duplicatas.
+- O processamento completo de 1,5 GB só será considerado validado após uma execução real na conta. Consulte [docs/experiment-results.md](experiment-results.md) para o estado registrado.
+- Testes automatizados locais: `uv run pytest tests/unit/ -v`. Nenhum resultado local deve ser descrito como execução Databricks.

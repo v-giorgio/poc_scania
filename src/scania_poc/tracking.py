@@ -2,8 +2,9 @@
 
 from typing import Any
 
-import mlflow
 import mlflow.sklearn
+
+import mlflow
 
 
 def log_survival_model(

@@ -1,53 +1,48 @@
-"""Benchmark de Classificação Ordinal — SCANIA Component X (IDA 2024).
-
-Mapeia TTE para classes ordinais e treina um classificador.
-Métricas: confusion matrix, balanced accuracy, macro-F1, MAOE.
-
-HIPÓTESE sobre as classes (confirmar com paper):
-  0 = TTE > 48  (sem reparo iminente)
-  1 = 24–48
-  2 = 12–24
-  3 = 6–12
-  4 = 0–6 (reparo iminente)
-"""
+"""Ordinal IDA 2024 benchmark using only labels known from residual time."""
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, f1_score
 
-from src.scania_poc.evaluation import mean_absolute_ordinal_error
-from src.scania_poc.schema import ORDINAL_CLASSES
+from src.scania_poc.evaluation import mean_absolute_ordinal_error, ordinal_total_cost
+from src.scania_poc.schema import (
+    ORDINAL_CLASSES,
+    ORDINAL_HORIZON,
+    UNKNOWN_ORDINAL_CLASS,
+)
 
 
 def bin_tte_to_classes(
-    tte: np.ndarray | pd.Series,
+    residual_time: np.ndarray | pd.Series,
     events: np.ndarray | pd.Series,
     class_map: dict[int, tuple[float, float]] | None = None,
+    horizon: float = ORDINAL_HORIZON,
 ) -> np.ndarray:
-    """Converte TTE em classes ordinais.
+    """Map residual follow-up to official classes; unknown cases receive -1.
 
-    Veículos censurados (events == 0) ou com TTE além do maior bucket
-    recebem a classe mais alta (sem urgência).
-
-    class_map: dict {class_int: (lower_inclusive, upper_exclusive)}.
-    Se None, usa ORDINAL_CLASSES de schema.py.
-
-    ATENÇÃO: Mapeamento hipotético — confirmar com paper antes de usar
-    em avaliação oficial do desafio IDA 2024.
+    ``residual_time`` is T - prediction_time, not absolute TTE. Classes 1–4
+    require an observed event and an interior point in their time window.
+    Class 0 requires no event within 48 units: an event after the horizon or
+    censoring observed beyond the full horizon. Boundary inclusion is not
+    stated in the challenge call, so exact boundaries remain unknown.
     """
     if class_map is None:
         class_map = ORDINAL_CLASSES
 
-    tte_arr = np.asarray(tte, dtype=float)
-    events_arr = np.asarray(events, dtype=int)
-    n_classes = len(class_map)
-    result = np.full(len(tte_arr), n_classes - 1, dtype=int)
+    residual = np.asarray(residual_time, dtype=float)
+    event = np.asarray(events, dtype=int)
+    if residual.shape != event.shape:
+        raise ValueError("residual_time e events devem ter o mesmo formato")
+    if not np.isin(event, [0, 1]).all():
+        raise ValueError("events deve conter apenas 0 (censura) e 1 (evento)")
 
-    for cls, (lo, hi) in sorted(class_map.items()):
-        in_bucket = (tte_arr >= lo) & (tte_arr < hi) & (events_arr == 1)
-        result[in_bucket] = cls
-
+    result = np.full(residual.shape, UNKNOWN_ORDINAL_CLASS, dtype=int)
+    result[(event == 1) & (residual > horizon)] = 0
+    result[(event == 0) & (residual > horizon)] = 0
+    for class_id, (lower, upper) in class_map.items():
+        in_window = (event == 1) & (residual > lower) & (residual < upper)
+        result[in_window] = class_id
     return result
 
 
@@ -58,7 +53,11 @@ def fit_ordinal_classifier(
     max_depth: int | None = 10,
     seed: int = 42,
 ) -> RandomForestClassifier:
-    """Ajusta RandomForestClassifier como benchmark ordinal."""
+    """Fit a class-balanced Random Forest benchmark."""
+    known = np.asarray(y_train) >= 0
+    if not known.any():
+        raise ValueError("Nenhum rótulo ordinal conhecido para treino")
+    x = X_train.loc[known] if isinstance(X_train, pd.DataFrame) else np.asarray(X_train)[known]
     model = RandomForestClassifier(
         n_estimators=n_estimators,
         max_depth=max_depth,
@@ -66,7 +65,7 @@ def fit_ordinal_classifier(
         random_state=seed,
         n_jobs=-1,
     )
-    model.fit(X_train, y_train)
+    model.fit(x, np.asarray(y_train)[known])
     return model
 
 
@@ -75,16 +74,25 @@ def evaluate_ordinal(
     y_pred: np.ndarray,
     n_classes: int = 5,
 ) -> dict[str, object]:
-    """Calcula métricas de avaliação para o classificador ordinal.
-
-    Retorna: confusion_matrix, balanced_accuracy, macro_f1, maoe.
-    """
+    """Return ordinal metrics and the official asymmetric total cost."""
     labels = list(range(n_classes))
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    true = np.asarray(y_true, dtype=int)
+    pred = np.asarray(y_pred, dtype=int)
+    if true.shape != pred.shape or len(true) == 0:
+        raise ValueError("y_true/y_pred devem ter mesmo formato não vazio")
+    cm = confusion_matrix(true, pred, labels=labels)
+    per_class_recall = np.divide(
+        cm.diagonal(),
+        cm.sum(axis=1),
+        out=np.zeros(n_classes, dtype=float),
+        where=cm.sum(axis=1) > 0,
+    )
     return {
         "confusion_matrix": cm.tolist(),
-        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
-        "macro_f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
-        "maoe": float(mean_absolute_ordinal_error(np.asarray(y_true), np.asarray(y_pred))),
-        "n": int(len(y_true)),
+        "balanced_accuracy": float(balanced_accuracy_score(true, pred)),
+        "macro_f1": float(f1_score(true, pred, labels=labels, average="macro", zero_division=0)),
+        "recall_by_class": per_class_recall.tolist(),
+        "maoe": mean_absolute_ordinal_error(true, pred),
+        "total_cost": ordinal_total_cost(true, pred),
+        "n": int(len(true)),
     }

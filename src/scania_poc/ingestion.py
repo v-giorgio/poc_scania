@@ -1,45 +1,68 @@
-"""Funções de ingestão de dados brutos para o S3 Raw.
+"""Managed-volume source identity and idempotent CSV-to-Bronze ingestion."""
 
-A camada Raw preserva os arquivos originais sem nenhuma modificação.
-Todas as transformações ocorrem na camada Silver (ver silver_transform.py).
-"""
+from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
-
-def build_s3_raw_path(bucket: str, prefix: str, filename: str) -> str:
-    """Constrói o path S3 completo para um arquivo na camada Raw."""
-    return f"s3://{bucket}/{prefix.strip('/')}/{filename}"
+from src.scania_poc.config import build_volume_raw_path, qualified_table_name
 
 
-def ingest_csv_to_raw(
+def sha256_file(source_path: str | Path, chunk_size: int = 8 * 1024 * 1024) -> str:
+    """Hash a source file in bounded memory, raising if it is missing or invalid."""
+    path = Path(source_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Arquivo Raw não encontrado: {path}")
+    if chunk_size < 1:
+        raise ValueError("chunk_size deve ser positivo")
+
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ingest_volume_csv_to_bronze(
     spark: Any,
-    local_or_s3_source: str,
-    s3_dest_path: str,
+    raw_volume_path: str,
+    filename: str,
+    data_schema: str,
     *,
     header: bool = True,
     delimiter: str = ",",
-) -> int:
-    """Copia um CSV para a camada Raw do S3 preservando o conteúdo original.
+) -> tuple[int, str, str]:
+    """Read one official CSV from a managed volume and overwrite its Bronze table.
 
-    Retorna o número de linhas lidas (sem contar o header).
-    Não aplica transformações — infere schema apenas para contagem.
+    The raw file remains untouched. Source SHA-256 is calculated in chunks so
+    it can be used as a content identity without loading the file into memory.
     """
-    df = spark.read.csv(
-        local_or_s3_source,
+    source_uri = build_volume_raw_path(raw_volume_path, filename)
+    version = sha256_file(source_uri)
+    table_name = qualified_table_name(data_schema, "bronze", Path(filename).stem)
+
+    import pyspark.sql.functions as F  # noqa: PLC0415
+
+    source = spark.read.csv(
+        source_uri,
         header=header,
         sep=delimiter,
         inferSchema=False,
     )
-    row_count = df.count()
-    df.write.mode("overwrite").option("header", True).csv(s3_dest_path)
-    return row_count
-
-
-def verify_raw_file_exists(spark: Any, s3_path: str) -> bool:
-    """Verifica se um arquivo/diretório existe no S3."""
-    try:
-        df = spark.read.csv(s3_path, header=True)
-        return df.count() > 0
-    except Exception:
-        return False
+    bronze = (
+        source.withColumn("_source_uri", F.lit(source_uri))
+        .withColumn("_source_version", F.lit(version))
+        .withColumn("_source_size_bytes", F.lit(Path(source_uri).stat().st_size))
+        .withColumn("_ingested_at", F.current_timestamp())
+    )
+    (
+        bronze.write.format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .saveAsTable(table_name)
+    )
+    row_count = spark.read.table(table_name).count()
+    if row_count == 0:
+        raise ValueError(f"Arquivo Raw não produziu linhas Bronze: {source_uri}")
+    return row_count, table_name, version

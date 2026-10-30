@@ -47,56 +47,56 @@
         <!-- ===== COLUNA PRINCIPAL (pipeline de dados) ===== -->
 
         <!-- 1. Dataset -->
-        <mxCell id="dataset" value="&lt;b&gt;SCANIA APS Failure Dataset&lt;/b&gt;&lt;br&gt;Fonte Pública (UCI / Kaggle)&lt;br&gt;~76k amostras · 171 features anônimas · target binário"
+        <mxCell id="dataset" value="&lt;b&gt;SCANIA Component X (IDA 2024)&lt;/b&gt;&lt;br&gt;Fonte oficial · oito CSVs&lt;br&gt;readouts + primeiro reparo/censura + especificações"
           style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;arcSize=8;"
           vertex="1" parent="1">
           <mxGeometry x="100" y="55" width="290" height="65" as="geometry"/>
         </mxCell>
 
-        <!-- 2. S3 Raw -->
-        <mxCell id="s3_raw" value="&lt;b&gt;S3 Raw&lt;/b&gt;&lt;br&gt;raw/scania_component_x/&lt;br&gt;CSV original · sem transformações"
+        <!-- 2. Unity Catalog Raw volume -->
+        <mxCell id="s3_raw" value="&lt;b&gt;UC Managed Volume · Raw&lt;/b&gt;&lt;br&gt;/Volumes/.../raw/&lt;br&gt;CSV original · sem transformações"
           style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#dae8fc;strokeColor=#6c8ebf;"
           vertex="1" parent="1">
           <mxGeometry x="120" y="160" width="250" height="65" as="geometry"/>
         </mxCell>
 
         <!-- 3. Databricks: Limpeza Silver -->
-        <mxCell id="nb_clean" value="&lt;b&gt;Databricks: Limpeza + Tipagem&lt;/b&gt;&lt;br&gt;&lt;i&gt;02_silver_transform.py&lt;/i&gt;&lt;br&gt;converte tipos · remove &quot;na&quot; strings · mapeia target"
+        <mxCell id="nb_clean" value="&lt;b&gt;Databricks: Ingestão + Silver&lt;/b&gt;&lt;br&gt;&lt;i&gt;01_ingest_raw.py · 02_silver_transform.py&lt;/i&gt;&lt;br&gt;Volume direto · contratos · SHA-256 · joins"
           style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;"
           vertex="1" parent="1">
           <mxGeometry x="100" y="275" width="290" height="65" as="geometry"/>
         </mxCell>
 
-        <!-- 4. S3 Silver -->
-        <mxCell id="s3_silver" value="&lt;b&gt;S3 Silver / Delta Lake&lt;/b&gt;&lt;br&gt;silver/component_x/&lt;br&gt;Schema enforcement · particionado · ACID"
+        <!-- 4. UC Bronze + Silver tables -->
+        <mxCell id="s3_silver" value="&lt;b&gt;Tabelas UC · Bronze + Silver&lt;/b&gt;&lt;br&gt;Delta gerenciado por camada/artefato&lt;br&gt;SHA-256 · schema enforcement · ACID"
           style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#dae8fc;strokeColor=#6c8ebf;"
           vertex="1" parent="1">
           <mxGeometry x="120" y="385" width="250" height="65" as="geometry"/>
         </mxCell>
 
         <!-- 5. Databricks: Feature Engineering Gold -->
-        <mxCell id="nb_features" value="&lt;b&gt;Databricks: Feature Engineering&lt;/b&gt;&lt;br&gt;&lt;i&gt;03_gold_features.py&lt;/i&gt;&lt;br&gt;imputação · seleção · normalização · split"
+        <mxCell id="nb_features" value="&lt;b&gt;Databricks: Snapshots Gold&lt;/b&gt;&lt;br&gt;&lt;i&gt;03_gold_features.py&lt;/i&gt;&lt;br&gt;split veículo antes · corte pré-evento · fit no treino"
           style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;"
           vertex="1" parent="1">
           <mxGeometry x="100" y="495" width="290" height="65" as="geometry"/>
         </mxCell>
 
-        <!-- 6. S3 Gold -->
-        <mxCell id="s3_gold" value="&lt;b&gt;S3 Gold / Delta Lake&lt;/b&gt;&lt;br&gt;gold/features_predictive/&lt;br&gt;Features prontas · treino / teste estratificado"
+        <!-- 6. UC Gold tables -->
+        <mxCell id="s3_gold" value="&lt;b&gt;Tabelas UC · Gold / Delta&lt;/b&gt;&lt;br&gt;train_fit · internal_validation/test&lt;br&gt;challenge_validation/test sem alvo de teste"
           style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#dae8fc;strokeColor=#6c8ebf;"
           vertex="1" parent="1">
           <mxGeometry x="120" y="605" width="250" height="65" as="geometry"/>
         </mxCell>
 
         <!-- 7. Databricks: Treinamento -->
-        <mxCell id="nb_train" value="&lt;b&gt;Databricks: Treinamento&lt;/b&gt;&lt;br&gt;&lt;i&gt;01_baseline · 02_mlflow_experiments&lt;/i&gt;&lt;br&gt;LogReg · Random Forest · XGBoost · LightGBM"
+        <mxCell id="nb_train" value="&lt;b&gt;Databricks: Modelagem&lt;/b&gt;&lt;br&gt;&lt;i&gt;01_baseline · 02_mlflow_experiments&lt;/i&gt;&lt;br&gt;Kaplan–Meier · CoxPH · RUL eventos · ordinal"
           style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;"
           vertex="1" parent="1">
           <mxGeometry x="100" y="675" width="290" height="65" as="geometry"/>
         </mxCell>
 
         <!-- 8. Databricks: Avaliação -->
-        <mxCell id="nb_eval" value="&lt;b&gt;Databricks: Avaliação&lt;/b&gt;&lt;br&gt;&lt;i&gt;01_model_evaluation.py&lt;/i&gt;&lt;br&gt;AUC-ROC · custo total (10×FP + 500×FN) · SHAP"
+        <mxCell id="nb_eval" value="&lt;b&gt;Databricks: Avaliação final&lt;/b&gt;&lt;br&gt;&lt;i&gt;01_model_evaluation.py&lt;/i&gt;&lt;br&gt;C-index · IBS IPCW · custo ordinal IDA · validação oficial"
           style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;"
           vertex="1" parent="1">
           <mxGeometry x="100" y="765" width="290" height="65" as="geometry"/>
@@ -133,7 +133,7 @@
         </mxCell>
 
         <!-- MLflow Model Registry -->
-        <mxCell id="mlflow_registry" value="&lt;b&gt;MLflow Model Registry&lt;/b&gt;&lt;br&gt;Melhor modelo versionado&lt;br&gt;Staging → Production"
+        <mxCell id="mlflow_registry" value="&lt;b&gt;MLflow Artifacts&lt;/b&gt;&lt;br&gt;Modelos · métricas · calibração&lt;br&gt;Registry opcional"
           style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;"
           vertex="1" parent="1">
           <mxGeometry x="640" y="765" width="250" height="65" as="geometry"/>
@@ -145,7 +145,7 @@
           vertex="1" parent="1">
           <mxGeometry x="640" y="400" width="100" height="20" as="geometry"/>
         </mxCell>
-        <mxCell id="leg_s3" value="AWS S3 / Delta Lake"
+        <mxCell id="leg_s3" value="UC Volume / tabelas Delta"
           style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;"
           vertex="1" parent="1">
           <mxGeometry x="640" y="425" width="170" height="35" as="geometry"/>
@@ -173,49 +173,49 @@
 
         <!-- ===== ARESTAS ===== -->
 
-        <!-- Dataset → S3 Raw -->
-        <mxCell id="e1" value="upload manual / AWS CLI"
+        <!-- Dataset → Raw volume -->
+        <mxCell id="e1" value="upload manual no volume"
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=9;"
           edge="1" source="dataset" target="s3_raw" parent="1">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
-        <!-- S3 Raw → Exploration (dashed) -->
+        <!-- Raw volume → Exploration (dashed) -->
         <mxCell id="e2" value="leitura (sem escrita)"
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#d6b656;fontSize=9;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;"
           edge="1" source="s3_raw" target="nb_exploration" parent="1">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
-        <!-- S3 Raw → nb_clean -->
-        <mxCell id="e3" value=""
+        <!-- Raw volume → nb_clean -->
+        <mxCell id="e3" value="leitura direta do volume"
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;"
           edge="1" source="s3_raw" target="nb_clean" parent="1">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
-        <!-- nb_clean → S3 Silver -->
-        <mxCell id="e4" value="escreve Delta Lake"
+        <!-- nb_clean → UC Silver -->
+        <mxCell id="e4" value="escreve Bronze/Silver Delta"
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=9;"
           edge="1" source="nb_clean" target="s3_silver" parent="1">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
-        <!-- S3 Silver → nb_features -->
+        <!-- UC Silver → nb_features -->
         <mxCell id="e5" value=""
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;"
           edge="1" source="s3_silver" target="nb_features" parent="1">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
-        <!-- nb_features → S3 Gold -->
+        <!-- nb_features → UC Gold -->
         <mxCell id="e6" value="escreve Delta Lake"
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=9;"
           edge="1" source="nb_features" target="s3_gold" parent="1">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
-        <!-- S3 Gold → nb_train -->
+        <!-- UC Gold → nb_train -->
         <mxCell id="e7" value=""
           style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;"
           edge="1" source="s3_gold" target="nb_train" parent="1">

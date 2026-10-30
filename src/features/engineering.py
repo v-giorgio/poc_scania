@@ -1,6 +1,6 @@
-"""Funções de engenharia de features."""
+"""Compatibility exports for canonical Component X feature helpers."""
 
+from src.scania_poc.evaluation import ordinal_total_cost
+from src.scania_poc.features import build_survival_snapshots, select_snapshot_records
 
-def compute_total_cost(false_positives: int, false_negatives: int) -> int:
-    """Calcula o custo total de classificação com os pesos do dataset SCANIA."""
-    return 10 * false_positives + 500 * false_negatives
+__all__ = ["build_survival_snapshots", "ordinal_total_cost", "select_snapshot_records"]

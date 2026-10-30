@@ -25,8 +25,14 @@ def test_ordinal_classes_count():
 
 
 def test_ordinal_classes_contiguous():
-    for i in range(len(ORDINAL_CLASSES) - 1):
-        assert ORDINAL_CLASSES[i][1] == ORDINAL_CLASSES[i + 1][0]
+    assert set(ORDINAL_CLASSES) == {0, 1, 2, 3, 4}
+    assert ORDINAL_CLASSES[0] == (48.0, float("inf"))
+    assert [ORDINAL_CLASSES[i] for i in range(1, 5)] == [
+        (24.0, 48.0),
+        (12.0, 24.0),
+        (6.0, 12.0),
+        (0.0, 6.0),
+    ]
 
 
 def test_spec_cols_count():

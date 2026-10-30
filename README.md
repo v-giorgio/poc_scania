@@ -1,30 +1,25 @@
-# PoC — Manutenção Preditiva de Veículos Pesados
+# PoC — Manutenção preditiva SCANIA Component X
 
-PoC de Engenharia de Dados e Machine Learning usando o dataset público **SCANIA APS Failure**.
-Contexto: frotas conectadas, similar ao Michelin Connected Fleet.
+Prova de conceito exploratória para estimar o tempo residual até o primeiro reparo observado do Component X no dataset associado ao desafio IDA 2024. O alvo não representa automaticamente falha mecânica, causalidade ou recomendação operacional.
 
-## Stack
-- **AWS S3** — armazenamento em camadas (Raw / Silver / Gold)
-- **Databricks + PySpark** — processamento e notebooks CRISP-DM
-- **Delta Lake** — formato de tabela com ACID e schema enforcement
-- **MLflow** — tracking de experimentos e model registry
-- **Python 3.11** — código auxiliar, testes e automação
+## Stack e armazenamento
+
+- **Databricks Free Edition:** notebooks Python em compute serverless para uso pessoal/não comercial.
+- **Unity Catalog managed volume:** CSVs oficiais Raw, mantidos sem alteração após upload.
+- **Tabelas UC gerenciadas em Delta:** Bronze, Silver e Gold.
+- **lifelines / scikit-learn / MLflow:** benchmarks e rastreamento de experimentos no workspace.
+
+## Setup e execução
+
+Consulte [docs/setup.md](docs/setup.md) para criar o volume, carregar os oito arquivos oficiais (~1,5 GB), configurar o Git Folder e executar os notebooks na ordem. O pipeline local contém somente testes sintéticos; a execução completa depende das quotas disponíveis na Free Edition.
+
+## Dados e metodologia
+
+Use os arquivos e documentação do [dataset oficial SCANIA Component X](https://researchdata.se/en/catalogue/dataset/2024-34) e do [chamado IDA 2024](https://ida2024.blogs.dsv.su.se/industrial-challenge/). O pacote oficial não contém rótulos de teste. Consulte [SPEC.md](SPEC.md), [discovery](docs/data-discovery.md), [dicionário](docs/data-dictionary.md), [modelagem/avaliação](docs/modeling-and-evaluation.md) e [estado dos resultados](docs/experiment-results.md).
 
 ## Estrutura
-Veja [docs/architecture.md](docs/architecture.md) para a arquitetura detalhada.
-Veja [docs/setup.md](docs/setup.md) para instruções de setup.
 
-## Metodologia
-CRISP-DM — notebooks organizados por etapa em `notebooks/`.
-
-## Dataset
-SCANIA APS Failure (UCI ML Repository).
-**Verificar licença antes de usar.** Instruções em `scripts/download_dataset.sh`.
-
-## Quick Start
-
-```bash
-uv sync --dev
-uv run pytest tests/unit/ -v
-bash scripts/validate_structure.sh
-```
+- `src/scania_poc/`: lógica reutilizável, paths de volume/tabelas UC e funções puras testáveis localmente.
+- `notebooks/`: fluxo Databricks em etapas CRISP-DM.
+- `config/data_contract.yaml`: contratos para os oito CSVs oficiais.
+- `docs/experiment-results.md`: verificações locais e estado da execução no workspace.

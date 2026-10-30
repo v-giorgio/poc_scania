@@ -1,47 +1,44 @@
-# Plano CRISP-DM
+# Plano CRISP-DM — SCANIA Component X
 
-## 1. Entendimento do Negócio
-- **Problema:** falhas no sistema de pressão de ar (APS) de caminhões Scania causam paradas não planejadas
-- **Objetivo:** classificar veículos com risco de falha antes que ocorra
-- **Métrica de negócio:** redução de falhas não planejadas; custo de manutenção evitada
-- **Critério de sucesso:** AUC-ROC > 0.85 e custo total (10*FP + 500*FN) abaixo do baseline
+## 1. Entendimento do negócio
 
-Notebook: `notebooks/01_business_understanding/01_business_context.py`
+- Pergunta: qual a distribuição do tempo/unidades até o primeiro reparo observado do Component X no instante de previsão?
+- A PoC é exploratória. Priorização de inspeções, disponibilidade e economia são hipóteses de valor a validar com stakeholders; não são resultados demonstrados.
+- Não inferir falha mecânica geral, causalidade, segurança ou prontidão para produção.
 
-## 2. Entendimento dos Dados
-- **Dataset:** SCANIA APS Failure (UCI / Kaggle)
-- ~60.000 amostras de treino, ~16.000 de teste
-- 171 atributos anonimizados de sensores do APS
-- Alta taxa de missing values (~170 colunas com missings)
-- Target binário: `class` = `pos` (falha APS) / `neg` (outra falha ou normal)
-- **Custo assimétrico:** FN custa 50x mais que FP (500 vs 10 no contexto original)
+Notebook: `notebooks/01_business_understanding/01_business_context.py`.
 
-Notebooks: `notebooks/02_data_understanding/`
+## 2. Entendimento dos dados
 
-## 3. Preparação dos Dados
-- Ingestão do CSV para S3 Raw (sem transformações)
-- Limpeza e tipagem → Silver (Delta Lake)
-- Imputação de missings, encoding, seleção de features → Gold (Delta Lake)
+- Dataset público SCANIA Component X associado ao desafio IDA 2024; inventário de oito CSVs oficiais em `docs/data-discovery.md`.
+- `train_tte.csv` descreve primeiro reparo observado ou fim de acompanhamento censurado. Unidade temporal anonimizada.
+- Readouts são séries esparsas/irregulares; identificadores de variáveis são anônimos. Rótulos oficiais só existem para validação, não para teste.
+- Tipos, chaves, ausências e proveniência estão em `docs/data-dictionary.md`; discovery é reproduzida por `scripts/run_discovery.py`.
 
-Notebooks: `notebooks/03_data_preparation/`
+## 3. Preparação
+
+- Originais ficam em um Unity Catalog managed volume Raw, tratado como somente leitura depois do upload; Databricks lê diretamente para tabelas UC Bronze Delta com caminho e SHA-256 de linhagem.
+- Validar schema, nulabilidade, chaves, valores e joins antes de Silver.
+- Dividir veículos antes de selecionar uma leitura por veículo e antes de aprender encoding/imputação.
+- Selecionar leitura determinística pseudoaleatória estritamente anterior ao evento/fim; calcular duração residual e censura sem transformar censurados em eventos.
 
 ## 4. Modelagem
-- Baseline: Regressão Logística
-- Candidatos: Random Forest, XGBoost, LightGBM
-- Tracking de todos os experimentos via MLflow
 
-Notebooks: `notebooks/04_modeling/`
+- Baseline de sobrevivência Kaplan–Meier e CoxPH L2 regularizado.
+- Benchmark RUL treinado/avaliado apenas em eventos observados, identificado como completo/seletivo.
+- Random Forest ordinal treinado só em rótulos derivados válidos, sem rótulos para censura insuficiente ou fronteiras ambíguas.
+- Regras, pressupostos, leakage e métricas em `docs/modeling-and-evaluation.md`.
 
 ## 5. Avaliação
-- Métricas: AUC-ROC, F1, matriz de confusão, custo total
-- Comparação de modelos no MLflow UI
-- Análise de feature importance (SHAP se viável)
 
-Notebook: `notebooks/05_evaluation/01_model_evaluation.py`
+- Split determinístico por veículo: treino interno, validação interna e teste interno.
+- Sobrevivência: Harrell C-index, IBS IPCW com KM de censura aprendido no treino e calibração Kaplan–Meier por horizonte com suporte.
+- RUL: MAE, mediana AE e RMSE somente nos eventos observados.
+- Ordinal: matriz de confusão, recall por classe, balanced accuracy, macro-F1, MAOE e matriz de custo oficial IDA.
+- Rótulos oficiais da validação são consultados apenas na avaliação final; conjunto de teste não tem rótulos e não recebe métrica supervisionada.
 
-## 6. Implantação (Conceitual)
-- **Opção A (PoC):** batch scoring via Databricks Job agendado
-- **Opção B (produção):** endpoint REST via MLflow Model Serving
-- Monitoramento de drift: a definir
+## 6. Entrega
 
-Notebook: `notebooks/06_deployment/01_deployment_concept.py`
+- MLflow registra configurações, seed, split, versão dos objetos fonte, revisão de código, versões de bibliotecas, métricas e artefatos.
+- A arquitetura é uma PoC cloud sem implantação produtiva, alertas ou custo/infraestrutura presumidos.
+- Resultados e limites de execução ficam em `docs/experiment-results.md`.

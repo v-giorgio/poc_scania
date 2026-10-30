@@ -1,212 +1,202 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 3.3 Features Gold — SCANIA Component X (IDA 2024)
+# MAGIC # 3.3 Gold: snapshots de treino sem leakage
 # MAGIC
-# MAGIC **Objetivo:** Preparar a camada Gold a partir do Silver:
-# MAGIC - Agregar leituras operacionais por veículo (último time_step como snapshot de predição)
-# MAGIC - Join com especificações do veículo
-# MAGIC - Encoding de variáveis categóricas (Spec_*)
-# MAGIC - Imputação de missings nas features numéricas (mediana por coluna)
-# MAGIC - Escrita em Delta Gold — pronta para modelagem
-# MAGIC
-# MAGIC **Inputs:** `s3://<S3_BUCKET>/silver/component_x/`
-# MAGIC
-# MAGIC **Outputs:** `s3://<S3_BUCKET>/gold/features_predictive/` (Delta Lake)
+# MAGIC Divide veículos antes de selecionar snapshots ou ajustar preprocessadores.
+# MAGIC Seleciona uma leitura determinística pseudoaleatória por veículo, sempre
+# MAGIC anterior ao primeiro reparo ou fim de acompanhamento. Validação/teste oficiais
+# MAGIC conservam o último readout fornecido; seus rótulos não entram no treino.
 
 # COMMAND ----------
 
 import pyspark.sql.functions as F
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import Imputer, StringIndexer
+from pyspark.sql.window import Window
 
+from src.scania_poc.features import build_survival_snapshots
+from src.scania_poc.config import qualified_table_name, validate_data_schema
 from src.scania_poc.schema import (
     EVENT_COL,
     FEATURE_COLS,
+    ORDINAL_HORIZON,
     SPEC_COLS,
     TTE_COL,
     TIME_STEP_COL,
     VEHICLE_ID_COL,
 )
+from src.scania_poc.splitting import split_by_vehicle
 
-dbutils.widgets.text("S3_BUCKET", "", "S3 Bucket name")
-S3_BUCKET = dbutils.widgets.get("S3_BUCKET")
-assert S3_BUCKET, "Defina o widget S3_BUCKET"
+dbutils.widgets.text("DATA_SCHEMA", "", "Schema UC das tabelas gerenciadas")
+dbutils.widgets.text("SEED", "42", "Seed para split e seleção de snapshot")
+DATA_SCHEMA = validate_data_schema(dbutils.widgets.get("DATA_SCHEMA").strip())
+SEED = int(dbutils.widgets.get("SEED"))
 
-SILVER_PREFIX = f"s3://{S3_BUCKET}/silver/component_x"
-GOLD_PREFIX = f"s3://{S3_BUCKET}/gold/features_predictive"
 
-# COMMAND ----------
+def load_silver(name):
+    return spark.read.table(qualified_table_name(DATA_SCHEMA, "silver", name))
 
-# MAGIC %md
-# MAGIC ## 1. Carregamento Silver
 
-# COMMAND ----------
-
-vehicles = spark.read.format("delta").load(f"{SILVER_PREFIX}/vehicles")
-readouts = spark.read.format("delta").load(f"{SILVER_PREFIX}/readouts")
-
-print(f"Vehicles: {vehicles.count():,}")
-print(f"Readouts: {readouts.count():,}")
+vehicles = load_silver("train_vehicles")
+readouts = load_silver("train_operational_readouts")
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## 2. Snapshot de predição — último time_step por veículo
-# MAGIC
-# MAGIC Para análise de sobrevivência, o snapshot é gerado NO FINAL da série
-# MAGIC disponível por veículo (sem usar informação pós-TTE).
-
-# COMMAND ----------
-
-from pyspark.sql.window import Window
-
-w = Window.partitionBy(VEHICLE_ID_COL).orderBy(F.desc(TIME_STEP_COL))
-
-last_readout = (
-    readouts.withColumn("_rank", F.rank().over(w))
-    .filter(F.col("_rank") == 1)
-    .drop("_rank", TIME_STEP_COL)
-)
-
-print(f"Snapshots gerados: {last_readout.count():,} (um por veículo)")
-
-# Verificar que nenhum time_step do snapshot supera o TTE
-snapshot_vs_tte = last_readout.join(
-    vehicles.select(VEHICLE_ID_COL, TTE_COL), on=VEHICLE_ID_COL
-)
-print("✓ Snapshot gerado a partir do último time_step observado")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 3. Join snapshot + vehicles (TTE, event, specs)
-
-# COMMAND ----------
-
-gold_base = last_readout.join(vehicles, on=VEHICLE_ID_COL, how="inner")
-assert gold_base.count() == vehicles.count(), "Join perdeu veículos"
-print(f"✓ Gold base: {gold_base.count():,} veículos com features + TTE + specs")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Encoding de variáveis categóricas (StringIndexer)
-
-# COMMAND ----------
-
-spec_indexed_cols = [f"{c}_idx" for c in SPEC_COLS]
-indexers = [
-    StringIndexer(inputCol=c, outputCol=f"{c}_idx", handleInvalid="keep")
-    for c in SPEC_COLS
+# Fixar as partições por veículo antes de derivar linhas temporais.
+vehicle_events = [
+    (int(row[VEHICLE_ID_COL]), int(row[EVENT_COL]))
+    for row in vehicles.select(VEHICLE_ID_COL, EVENT_COL).collect()
 ]
-pipeline = Pipeline(stages=indexers)
-gold_encoded = pipeline.fit(gold_base).transform(gold_base).drop(*SPEC_COLS)
-print(f"✓ Specs encoded: {spec_indexed_cols}")
+train_ids, internal_validation_ids, internal_test_ids = split_by_vehicle(
+    [item[0] for item in vehicle_events],
+    [item[1] for item in vehicle_events],
+    ratios=(0.70, 0.15, 0.15),
+    seed=SEED,
+)
+partition_rows = (
+    [(vehicle_id, "train_fit") for vehicle_id in train_ids]
+    + [(vehicle_id, "internal_validation") for vehicle_id in internal_validation_ids]
+    + [(vehicle_id, "internal_test") for vehicle_id in internal_test_ids]
+)
+partition_df = spark.createDataFrame(partition_rows, [VEHICLE_ID_COL, "model_partition"])
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 5. Imputação de missings (mediana por feature)
-
-# COMMAND ----------
-
-cols_with_missing = [
-    c for c in FEATURE_COLS
-    if gold_encoded.filter(F.col(c).isNull()).count() > 0
-]
-print(f"Colunas com missing a imputar: {len(cols_with_missing)}")
-
-if cols_with_missing:
-    output_cols = [f"{c}_imputed" for c in cols_with_missing]
-    imputer = Imputer(
-        inputCols=cols_with_missing,
-        outputCols=output_cols,
-        strategy="median",
+readouts_by_id = {}
+for partition_name, ids in [
+    ("train_fit", train_ids),
+    ("internal_validation", internal_validation_ids),
+    ("internal_test", internal_test_ids),
+]:
+    partition_targets = vehicles.join(partition_df, VEHICLE_ID_COL).filter(
+        F.col("model_partition") == partition_name
     )
-    gold_imputed = imputer.fit(gold_encoded).transform(gold_encoded)
-    # Substituir colunas originais pelas imputadas
-    for orig, imp in zip(cols_with_missing, output_cols):
-        gold_imputed = gold_imputed.drop(orig).withColumnRenamed(imp, orig)
-else:
-    gold_imputed = gold_encoded
-
-null_after = gold_imputed.select(
-    [F.sum(F.col(c).isNull().cast("int")).alias(c) for c in FEATURE_COLS]
-).collect()[0]
-remaining_nulls = sum(null_after)
-print(f"Nulos restantes após imputação: {remaining_nulls}")
+    selected = build_survival_snapshots(
+        readouts,
+        partition_targets.select(
+            VEHICLE_ID_COL, TTE_COL, EVENT_COL, "_tte_source_uri", "_tte_source_version"
+        ),
+        seed=SEED,
+    )
+    selected = selected.join(
+        partition_targets.select(VEHICLE_ID_COL, *SPEC_COLS, "_specs_source_uri", "_specs_source_version"),
+        on=VEHICLE_ID_COL,
+        how="inner",
+    )
+    selected = selected.withColumn(
+        "class_label_derived",
+        F.when(
+            ((F.col("event_observed") == 1) & (F.col("residual_time") > ORDINAL_HORIZON))
+            | ((F.col("event_observed") == 0) & (F.col("residual_time") > ORDINAL_HORIZON)),
+            F.lit(0),
+        )
+        .when(
+            (F.col("event_observed") == 1)
+            & (F.col("residual_time") > 24)
+            & (F.col("residual_time") < 48),
+            F.lit(1),
+        )
+        .when(
+            (F.col("event_observed") == 1)
+            & (F.col("residual_time") > 12)
+            & (F.col("residual_time") < 24),
+            F.lit(2),
+        )
+        .when(
+            (F.col("event_observed") == 1)
+            & (F.col("residual_time") > 6)
+            & (F.col("residual_time") < 12),
+            F.lit(3),
+        )
+        .when(
+            (F.col("event_observed") == 1)
+            & (F.col("residual_time") > 0)
+            & (F.col("residual_time") < 6),
+            F.lit(4),
+        )
+        .otherwise(F.lit(None).cast("int")),
+    )
+    if selected.count() != len(ids):
+        no_snapshot = len(ids) - selected.count()
+        print(f"{partition_name}: {no_snapshot} veículos sem readout elegível; excluídos e registrados")
+    boundary_or_zero = selected.filter(
+        F.col("residual_time").isin(0.0, 6.0, 12.0, 24.0, 48.0)
+    ).count()
+    censored_below_horizon = selected.filter(
+        (F.col("event_observed") == 0) & (F.col("residual_time") < ORDINAL_HORIZON)
+    ).count()
+    unknown_labels = selected.filter(F.col("class_label_derived").isNull()).count()
+    print(
+        f"{partition_name}: rótulos ordinais desconhecidos={unknown_labels:,}; "
+        f"fronteira/evento zero={boundary_or_zero:,}; "
+        f"censura <48={censored_below_horizon:,}"
+    )
+    readouts_by_id[partition_name] = selected
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## 6. Seleção das colunas finais e escrita Gold
+# Ajustar indexers e imputador exclusivamente no treino interno.
+train_fit = readouts_by_id["train_fit"]
+indexed_cols = [f"{col}_idx" for col in SPEC_COLS]
+imputed_cols = [f"{col}_imputed" for col in FEATURE_COLS]
+stages = [
+    StringIndexer(inputCol=col, outputCol=f"{col}_idx", handleInvalid="keep")
+    for col in SPEC_COLS
+]
+stages.append(Imputer(inputCols=FEATURE_COLS, outputCols=imputed_cols, strategy="median"))
+preprocessing = Pipeline(stages=stages).fit(train_fit)
+
+
+def write_gold(frame, artifact, include_targets):
+    transformed = preprocessing.transform(frame)
+    columns = (
+        [VEHICLE_ID_COL, "prediction_time", "residual_time", "event_observed", "class_label_derived"]
+        if include_targets
+        else [VEHICLE_ID_COL, "prediction_time"]
+    )
+    columns += imputed_cols + indexed_cols
+    columns += ["_readouts_source_uri", "_readouts_source_version"]
+    columns += ["_specs_source_uri", "_specs_source_version"]
+    if include_targets:
+        columns += ["_tte_source_uri", "_tte_source_version"]
+    output = transformed.select(*columns)
+    table = qualified_table_name(DATA_SCHEMA, "gold", artifact)
+    output.write.format("delta").mode("overwrite").option(
+        "overwriteSchema", "true"
+    ).saveAsTable(table)
+    return output.count()
+
+
+for partition_name in ("train_fit", "internal_validation", "internal_test"):
+    count = write_gold(
+        readouts_by_id[partition_name],
+        partition_name,
+        include_targets=True,
+    )
+    print(f"{partition_name}: {count:,} snapshots Gold")
 
 # COMMAND ----------
 
-final_cols = (
-    [VEHICLE_ID_COL, TTE_COL, EVENT_COL]
-    + FEATURE_COLS
-    + spec_indexed_cols
-)
-gold_final = gold_imputed.select(final_cols)
-
-gold_final.write.format("delta").mode("overwrite").save(f"{GOLD_PREFIX}/train")
-print(f"✓ Gold train escrito: {GOLD_PREFIX}/train")
-print(f"  Dimensões: {gold_final.count():,} veículos × {len(gold_final.columns)} colunas")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 7. Repetir para validação e teste
-
-# COMMAND ----------
-
-for split in ["validation", "test"]:
-    labels_s = spark.read.format("delta").load(f"{SILVER_PREFIX}/{split}/labels")
-    readouts_s = spark.read.format("delta").load(f"{SILVER_PREFIX}/{split}/readouts")
-    specs_s = spark.read.format("delta").load(f"{SILVER_PREFIX}/{split}/specs")
-
-    # Snapshot: último time_step
-    last_r = (
-        readouts_s.withColumn("_rank", F.rank().over(
-            Window.partitionBy(VEHICLE_ID_COL).orderBy(F.desc(TIME_STEP_COL))
-        ))
+# A validação oficial e o teste não possuem TTE para construir alvo de sobrevivência.
+# Os readouts já terminam no corte selecionado pela organização do desafio.
+for split in ("validation", "test"):
+    split_readouts = load_silver(f"{split}_operational_readouts")
+    split_specs = load_silver(f"{split}_specifications")
+    latest = (
+        split_readouts.withColumn(
+            "_rank",
+            F.row_number().over(
+                Window.partitionBy(VEHICLE_ID_COL).orderBy(F.desc(TIME_STEP_COL))
+            ),
+        )
         .filter(F.col("_rank") == 1)
-        .drop("_rank", TIME_STEP_COL)
+        .withColumnRenamed(TIME_STEP_COL, "prediction_time")
+        .drop("_rank")
     )
-
-    base = last_r.join(labels_s, on=VEHICLE_ID_COL).join(specs_s, on=VEHICLE_ID_COL)
-
-    # Encoding
-    encoded = pipeline.transform(base).drop(*SPEC_COLS)
-
-    # Imputação (mesmo imputer do treino — aplicar sem re-fit)
-    if cols_with_missing:
-        encoded = imputer.transform(encoded)
-        for orig, imp in zip(cols_with_missing, output_cols):
-            encoded = encoded.drop(orig).withColumnRenamed(imp, orig)
-
-    final_split_cols = (
-        [VEHICLE_ID_COL, "class_label"]
-        + FEATURE_COLS
-        + spec_indexed_cols
+    latest = latest.join(
+        split_specs.select(VEHICLE_ID_COL, *SPEC_COLS, "_specs_source_uri", "_specs_source_version"),
+        on=VEHICLE_ID_COL,
+        how="inner",
     )
-    gold_split = encoded.select(final_split_cols)
-    gold_split.write.format("delta").mode("overwrite").save(f"{GOLD_PREFIX}/{split}")
-    print(f"✓ Gold {split}: {gold_split.count():,} veículos")
+    count = write_gold(latest, f"challenge_{split}", include_targets=False)
+    print(f"challenge_{split}: {count:,} snapshots Gold, sem rótulo carregado")
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 8. Resumo
-
-# COMMAND ----------
-
-print("=" * 60)
-print("GOLD CONCLUÍDO")
-print("=" * 60)
-print(f"  {GOLD_PREFIX}/train      — treino para survival/RUL")
-print(f"  {GOLD_PREFIX}/validation — validação com class_label")
-print(f"  {GOLD_PREFIX}/test       — teste com class_label")
-print()
-print("Próximo passo: 04_modeling/01_baseline_model.py")
+print(f"Seed do split/snapshot: {SEED}; horizonte ordinal: {ORDINAL_HORIZON} time_steps")

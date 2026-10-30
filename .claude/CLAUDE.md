@@ -1,22 +1,22 @@
 # CLAUDE.md — poc_scania_michelin
 
 ## Contexto do Projeto
-PoC de manutenção preditiva de veículos pesados usando o dataset público SCANIA APS Failure.
+PoC exploratória sobre o tempo residual até o primeiro reparo observado do SCANIA Component X (IDA 2024).
 Demonstra competências de Engenharia de Dados, ML e Cloud no contexto de frotas conectadas (Michelin Connected Fleet).
 
 ## Stack
-- **Armazenamento:** AWS S3 (camadas Raw / Silver / Gold via Delta Lake)
-- **Processamento:** Databricks + PySpark
+- **Armazenamento:** Unity Catalog managed volume para Raw; tabelas UC gerenciadas em Delta para Bronze/Silver/Gold
+- **Processamento:** Databricks Free Edition serverless + PySpark/Spark Connect
 - **Tracking:** MLflow (integrado ao Databricks)
 - **Código auxiliar:** Python 3.11+
 - **Metodologia:** CRISP-DM
 
-## Estrutura de Dados no S3
+## Estrutura de dados no Databricks
 ```
-s3://<bucket>/
-  raw/scania_component_x/         # dataset original, sem modificações
-  silver/component_x/             # dados limpos, tipados, particionados
-  gold/features_predictive/       # features prontas para modelagem
+/Volumes/<catalog>/<schema>/<volume>/raw/  # CSVs originais, sem modificações
+<catalog>.<schema>.bronze_<arquivo>        # Delta com path/SHA-256/horário
+<catalog>.<schema>.silver_<artefato>       # dados tipados e validados
+<catalog>.<schema>.gold_<partição>         # features prontas para modelagem
 ```
 
 ## Convenções de Notebooks Databricks
@@ -27,14 +27,18 @@ s3://<bucket>/
 ## Regras para Claude Code
 - Não criar credenciais, tokens ou secrets em arquivos rastreados pelo git
 - Não versionar datasets, artefatos de modelo (.pkl, .mlflow) nem checkpoints
+- Não usar `test_labels.csv`: o pacote oficial não fornece rótulos de teste
+- Excluir do treino ordinal censurados antes de 48 unidades e tempos exatamente nas fronteiras
+- Nunca usar features após o corte ou TTE/status como feature
 - Respeitar a metodologia CRISP-DM na organização dos notebooks
 - Código Python deve passar em `ruff check` e `ruff format`
 - Testes em `tests/unit/` para toda função em `src/`
 - Antes de criar novos subagentes em `.claude/agents/`, consultar o usuário
 
 ## Decisões Pendentes
-- Dataset: verificar licença e método de download antes de automatizar
-- Bucket S3 e permissões IAM: a definir
-- Cluster Databricks: tamanho e configuração a definir
+- Dataset: arquivos são obtidos manualmente da página oficial; não automatizar download
+- `RAW_VOLUME_PATH` e `DATA_SCHEMA`: informar como widgets de execução
+- Free Edition é pessoal/não comercial e sujeita a quotas de compute
+- Estratégia de deploy do modelo: batch score vs. endpoint REST
 - Estratégia de deploy do modelo: batch score vs. endpoint REST
 - Ver `docs/decisions/ADR-001-stack-choices.md` para contexto

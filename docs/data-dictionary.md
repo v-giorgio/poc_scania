@@ -1,112 +1,64 @@
-# Dicionário de Dados — SCANIA Component X (IDA 2024)
+# Dicionário de dados — SCANIA Component X (IDA 2024)
 
-> Baseado na inspeção dos arquivos CSV. Semântica derivada do paper quando explícita,
-> ou marcada como [HIPÓTESE] quando inferida. Atualizar após leitura completa dos PDFs.
+Os nomes, tipos observados, nulabilidade e chaves abaixo vêm dos oito CSVs oficiais em `dataset_local/`; agregados são recalculáveis com `scripts/run_discovery.py`. As semânticas documentadas vêm do chamado `papers/2024_IDA_challenge_v2.pdf`. A documentação não define o significado físico dos códigos numéricos nem a inclusão dos limites temporais.
 
----
+## Arquivos oficiais
 
-## train_tte.csv
+| Arquivo | Grão | Chave | Conteúdo |
+|---|---|---|---|
+| `train_tte.csv` | Um registro por veículo | `vehicle_id` | Duração até o primeiro reparo observado ou duração de acompanhamento censurada. |
+| `train_operational_readouts.csv` | Leitura por veículo e instante | `(vehicle_id, time_step)` | Contadores/histogramas anonimizados ao longo do tempo. |
+| `train_specifications.csv` | Um registro por veículo | `vehicle_id` | Categorias de especificação selecionadas por especialistas. |
+| `validation_labels.csv` | Um rótulo por veículo | `vehicle_id` | Classe da última leitura disponibilizada na validação oficial. |
+| `validation_operational_readouts.csv` | Série truncada por veículo | `(vehicle_id, time_step)` | Leituras disponíveis até o corte aleatório definido pelo desafio. |
+| `validation_specifications.csv` | Um registro por veículo | `vehicle_id` | Categorias de especificação. |
+| `test_operational_readouts.csv` | Série truncada por veículo | `(vehicle_id, time_step)` | Leituras até o corte aleatório definido pelo desafio; sem rótulos oficiais. |
+| `test_specifications.csv` | Um registro por veículo | `vehicle_id` | Categorias de especificação. |
 
-Tabela de sobrevivência: uma linha por veículo do conjunto de treino.
+`test_labels.csv` não faz parte do pacote oficial e não é lido pelo pipeline. Se existir uma cópia local com esse nome, sua proveniência não está validada e ela não deve ser usada para avaliação.
 
-| Coluna | Tipo | Missing | Semântica | Fonte |
-|---|---|---|---|---|
-| `vehicle_id` | int | 0% | Identificador único do veículo | Observado |
-| `length_of_study_time_step` | float | 0% | Duração de acompanhamento do veículo no estudo (time_steps) | Paper |
-| `in_study_repair` | int {0,1} | 0% | 1 = reparo do Componente X observado no período; 0 = censurado | [HIPÓTESE: confirmar com paper] |
+## Campos e proveniência semântica
 
-**Notas:**
-- `in_study_repair = 0` significa que o veículo saiu do estudo sem reparo (right-censoring)
-- TTE varia de 73,4 a 510,0 time_steps (todos acima de 48)
-- Taxa de evento: 9,64% (2.272/23.550 veículos)
+### `train_tte.csv`
 
----
+| Coluna | Tipo observado | Nulos | Semântica e evidência |
+|---|---|---:|---|
+| `vehicle_id` | Inteiro | 0 | Identificador do veículo; observado como chave nos CSVs e descrito pelo chamado. |
+| `length_of_study_time_step` | Numérico | 0 | Duração em unidades `time_step` desde o início de operação com Component X. Para eventos, tempo até o primeiro reparo; para `in_study_repair=0`, duração sem reparo observado. Fonte: chamado oficial, seção Training Data. |
+| `in_study_repair` | Inteiro `{0,1}` | 0 | `1`: Component X reparado pela primeira vez na duração informada; `0`: nenhum reparo no período informado, tratado como censura à direita. Fonte: chamado oficial. |
 
-## train_operational_readouts.csv / validation_operational_readouts.csv / test_operational_readouts.csv
+O chamado confirma que o alvo é o **primeiro reparo observado**. Não há base para tratar a duração censurada como um reparo nem para inferir recorrência após esse primeiro reparo.
 
-Série temporal de leituras de sensores por veículo. Múltiplas linhas por veículo.
+### `*_operational_readouts.csv`
 
-| Coluna | Tipo | Missing (treino) | Semântica | Fonte |
-|---|---|---|---|---|
-| `vehicle_id` | int | 0% | Identificador do veículo | Observado |
-| `time_step` | float | 0% | Instante da leitura no tempo anonimizado | [HIPÓTESE: unidade não é dia/km] |
-| `171_0` | float | 0% | Leitura do sensor do grupo 171 (1 sub-canal) | [HIPÓTESE: cumulative counter] |
-| `666_0` | float | 0% | Leitura do sensor do grupo 666 (1 sub-canal) | [HIPÓTESE] |
-| `427_0` | float | 0% | Leitura do sensor do grupo 427 (1 sub-canal) | [HIPÓTESE] |
-| `837_0` | float | 0% | Leitura do sensor do grupo 837 (1 sub-canal) | [HIPÓTESE] |
-| `167_0`..`167_9` | float | <1% | 10 sub-canais do sensor 167 | [HIPÓTESE] |
-| `309_0` | float | <1% | Leitura do sensor do grupo 309 | [HIPÓTESE] |
-| `272_0`..`272_9` | float | <1% | 10 sub-canais do sensor 272 | [HIPÓTESE] |
-| `835_0` | float | <1% | Leitura do sensor do grupo 835 | [HIPÓTESE] |
-| `370_0` | float | <1% | Leitura do sensor do grupo 370 | [HIPÓTESE] |
-| `291_0`..`291_10` | float | **~0,86%** | 11 sub-canais do sensor 291 — faltam em bloco | [HIPÓTESE] |
-| `158_0`..`158_9` | float | <1% | 10 sub-canais do sensor 158 | [HIPÓTESE] |
-| `100_0` | float | <1% | Leitura do sensor do grupo 100 | [HIPÓTESE] |
-| `459_0`..`459_19` | float | **~0,74%** | 20 sub-canais do sensor 459 — faltam em bloco | [HIPÓTESE] |
-| `397_0`..`397_35` | float | <1% | 36 sub-canais do sensor 397 (maior grupo) | [HIPÓTESE] |
+| Colunas | Tipo observado | Nulos | Semântica e evidência |
+|---|---|---:|---|
+| `vehicle_id` | Inteiro | 0 | Identificador do veículo. |
+| `time_step` | Numérico | 0 | Tempo relativo ao início de operação do veículo e Component X. A unidade é anonimizada; não converter para dias, horas ou distância. |
+| 105 colunas com padrão `<variable_id>_<bin_index>` | Numérico | Presentes em 104 colunas no arquivo de treino observado | Contadores numéricos ou bins de histogramas de 14 variáveis anonimizadas. O chamado explica o formato do nome, mas não divulga o significado físico dos códigos. |
 
-**Total de colunas de features:** 105  
-**Codificação de missings:** valores nulos reais (NaN), **não** string `"na"`
+O chamado informa que as séries são esparsas e irregularmente amostradas, e que frequências de reparos e leituras podem ter sido modificadas. Os nulos são mantidos; nenhuma semântica de sensor é atribuída aos prefixos numéricos. A chave composta foi verificada sem duplicatas nos CSVs observados.
 
----
+### `*_specifications.csv`
 
-## train_specifications.csv / validation_specifications.csv / test_specifications.csv
+| Colunas | Tipo observado | Nulos | Semântica e evidência |
+|---|---|---:|---|
+| `vehicle_id` | Inteiro | 0 | Identificador do veículo. |
+| `Spec_0`–`Spec_7` | String categórica (`CatN`) | 0 | Especificações selecionadas por especialistas; o chamado cita tipo de motor e configuração de rodas como exemplos, mas não mapeia cada coluna a um atributo. |
 
-Atributos categóricos fixos por veículo (não variam com o tempo).
+### `validation_labels.csv`
 
-| Coluna | Tipo | Missing | Valores únicos | Semântica |
-|---|---|---|---|---|
-| `vehicle_id` | int | 0% | — | Identificador do veículo |
-| `Spec_0` | string | 0% | Cat0, Cat1, Cat2 (3) | [HIPÓTESE: tipo de veículo?] |
-| `Spec_1` | string | 0% | Cat0..Cat28 (29) | [HIPÓTESE: modelo/configuração?] |
-| `Spec_2` | string | 0% | Cat0..Cat20 (21) | [HIPÓTESE] |
-| `Spec_3` | string | 0% | Cat0..Cat3 (4) | [HIPÓTESE] |
-| `Spec_4` | string | 0% | Cat0, Cat1 (2) | [HIPÓTESE: feature binária] |
-| `Spec_5` | string | 0% | Cat0..Cat4 (5) | [HIPÓTESE] |
-| `Spec_6` | string | 0% | Cat0..Cat18 com gaps (17) | [HIPÓTESE] |
-| `Spec_7` | string | 0% | Cat0..Cat8 (9) | [HIPÓTESE] |
+| Coluna | Tipo observado | Nulos | Semântica e evidência |
+|---|---|---:|---|
+| `vehicle_id` | Inteiro | 0 | Identificador do veículo da validação. |
+| `class_label` | Inteiro `{0,1,2,3,4}` | 0 | Rótulo da última leitura fornecida para o veículo. A validação serve para avaliação prevista pelo desafio, não para treino ou tuning. |
 
----
+O chamado oficial define as janelas 1–4 antes do primeiro evento: classe 1 entre 48 e 24 unidades; classe 2 entre 24 e 12; classe 3 entre 12 e 6; classe 4 entre 6 e 0. A classe 0 representa a classe restante sem evento iminente dentro do horizonte de 48 unidades. A publicação não especifica se as pontas das janelas são inclusivas; por isso o código não deriva rótulos para tempos residuais exatamente iguais a 0, 6, 12, 24 ou 48.
 
-## validation_labels.csv / test_labels.csv
+Para treino ordinal derivado, a classe 0 só é conhecida se o evento ocorrer depois de 48 unidades residuais ou se houver mais de 48 unidades completas de acompanhamento censurado sem evento. Censura abaixo de 48 ou exatamente na fronteira é desconhecida, não classe 0.
 
-Rótulos ordinais para avaliação classificatória. Não existe equivalente no treino
-(o treino usa `train_tte.csv` diretamente para sobrevivência).
+## Junções e split
 
-| Coluna | Tipo | Missing | Semântica | Fonte |
-|---|---|---|---|---|
-| `vehicle_id` | int | 0% | Identificador do veículo | Observado |
-| `class_label` | int {0,1,2,3,4} | 0% | Classe ordinal de urgência de reparo | [HIPÓTESE: 0=sem urgência, 4=urgente] |
+`vehicle_id` é a chave de junção entre arquivos de cada partição. A discovery valida igualdade de conjuntos de IDs entre TTE, especificações e readouts de treino; entre labels/specs/readouts de validação; e entre specs/readouts de teste. Também verifica que os IDs não se sobrepõem entre partições oficiais.
 
-**[HIPÓTESE — CONFIRMAR COM papers/2024_IDA_challenge_v2.pdf]**
-
-Mapeamento tentativo (a confirmar):
-
-| Classe | Intervalo de TTE | Semântica |
-|---|---|---|
-| 0 | > 48 time_steps (ou censurado) | Sem reparo iminente |
-| 1 | 24–48 time_steps | Reparo relativamente distante |
-| 2 | 12–24 time_steps | Reparo moderadamente próximo |
-| 3 | 6–12 time_steps | Reparo próximo |
-| 4 | 0–6 time_steps | Reparo muito iminente |
-
-**Alternativa hipótese (inversa):** 0=0-6, 1=6-12, 2=12-24, 3=24-48, 4=48+ (padrão SPEC.md).
-A distribuição (classe 0 = 97%) favorece a primeira hipótese (0 = sem urgência).
-
----
-
-## Relações entre Arquivos
-
-```
-vehicle_id (PK)
-   ├── train_tte.csv           (1:1 por veículo)
-   ├── train_specifications.csv (1:1 por veículo)
-   └── train_operational_readouts.csv (1:N por veículo — múltiplos time_steps)
-
-vehicle_id (PK, apenas val/test)
-   ├── validation_labels.csv   (1:1)
-   ├── validation_specifications.csv (1:1)
-   └── validation_operational_readouts.csv (1:N)
-```
-
-**Joins confirmados:** `vehicle_id` está presente em todos os arquivos e é o único campo de junção.
+No split interno de modelagem, a partição é feita por veículo antes de derivar snapshots ou ajustar preprocessadores. O snapshot de treino é uma leitura pseudoaleatória determinística, estritamente anterior ao primeiro reparo ou fim do acompanhamento. A saída Gold registra `prediction_time`, tempo residual, evento/censura e caminhos/SHA-256 das fontes Raw.

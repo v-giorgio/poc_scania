@@ -8,6 +8,7 @@ e podem ser usadas em testes locais. Funções que recebem DataFrame importam
 pyspark lazily para não bloquear testes sem Spark.
 """
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -74,9 +75,23 @@ def validate_contract(
     if missing_cols:
         violations["missing_columns"] = missing_cols
 
+    dtype_aliases = {
+        "int": {"int", "bigint", "smallint", "tinyint"},
+        "float": {"float", "double", "decimal"},
+        "str": {"string"},
+    }
     for col, spec in required_cols_spec.items():
         if col not in df.columns:
             continue
+
+        expected_type = spec.get("dtype")
+        actual_type = df.schema[col].dataType.simpleString().lower()
+        if expected_type in dtype_aliases and not any(
+            actual_type.startswith(alias) for alias in dtype_aliases[expected_type]
+        ):
+            violations.setdefault("dtype_mismatch", []).append(
+                f"{col}: expected {expected_type}, observed {actual_type}"
+            )
 
         nullable = spec.get("nullable", True)
         null_violations = validate_no_unexpected_nulls(df, col, nullable)
@@ -102,14 +117,75 @@ def validate_contract(
                     f"{col}: {below_min} values below {spec['min_value']}"
                 )
 
+        if "pattern" in spec:
+            invalid = df.filter(
+                F.col(col).isNotNull() & ~F.col(col).cast("string").rlike(spec["pattern"])
+            ).count()
+            if invalid:
+                violations.setdefault("pattern_violations", []).append(
+                    f"{col}: {invalid} values do not match {spec['pattern']}"
+                )
+
+    feature_spec = file_spec.get("feature_columns", {})
+    feature_pattern = feature_spec.get("prefix")
+    feature_cols = [col for col in df.columns if feature_pattern and re.match(feature_pattern, col)]
+    measured_cols = [col for col in required_col_names if col in df.columns] + feature_cols
+    if feature_spec and len(feature_cols) != 105:
+        violations["feature_column_count"] = [
+            f"expected 105 sensor columns, found {len(feature_cols)}"
+        ]
+
+    for col in feature_cols:
+        actual_type = df.schema[col].dataType.simpleString().lower()
+        if actual_type not in dtype_aliases.get(feature_spec.get("dtype"), set()):
+            violations.setdefault("dtype_mismatch", []).append(
+                f"{col}: expected {feature_spec.get('dtype')}, observed {actual_type}"
+            )
+
+    numeric_cols = [
+        col
+        for col in measured_cols
+        if col in df.columns
+        and (col in feature_cols or required_cols_spec.get(col, {}).get("dtype") == "float")
+    ]
+    for col in numeric_cols:
+        non_finite = df.filter(
+            F.col(col).isNotNull()
+            & (F.isnan(F.col(col)) | F.col(col).isin(float("inf"), float("-inf")))
+        ).count()
+        if non_finite:
+            violations.setdefault("non_finite_values", []).append(
+                f"{col}: {non_finite} NaN/Infinity values"
+            )
+
+    key_cols = file_spec.get("unique_key", [])
+    if key_cols and all(col in df.columns for col in key_cols):
+        duplicate_keys = df.groupBy(*key_cols).count().filter(F.col("count") > 1).count()
+        if duplicate_keys:
+            violations["duplicate_keys"] = [f"{key_cols}: {duplicate_keys} duplicate key groups"]
+
     max_missing = file_spec.get("max_missing_rate", 1.0)
     n_total = df.count()
-    n_cells = n_total * len(df.columns)
+    n_cells = n_total * len(measured_cols)
     if n_cells > 0:
-        null_count = df.select([F.sum(F.col(c).isNull().cast("int")) for c in df.columns])
+        null_count = df.select(
+            [F.sum(F.col(c).isNull().cast("int")).alias(c) for c in measured_cols]
+        )
         total_nulls = sum(null_count.collect()[0])
         global_rate = missing_rate(total_nulls, n_cells)
         if global_rate > max_missing:
             violations["global_missing_rate"] = [f"{global_rate:.3%} > threshold {max_missing:.3%}"]
+
+    if feature_cols and n_total:
+        nulls_by_feature = df.select(
+            [F.sum(F.col(c).isNull().cast("int")).alias(c) for c in feature_cols]
+        ).collect()[0]
+        threshold = feature_spec.get("max_missing_rate", 1.0)
+        for col in feature_cols:
+            rate = nulls_by_feature[col] / n_total
+            if rate > threshold:
+                violations.setdefault("feature_missing_rate", []).append(
+                    f"{col}: {rate:.3%} > threshold {threshold:.3%}"
+                )
 
     return violations

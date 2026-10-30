@@ -58,6 +58,16 @@ def test_split_mismatched_lengths():
         split_by_vehicle([1, 2, 3], [0, 1])
 
 
+def test_split_rejects_duplicate_vehicle_ids():
+    with pytest.raises(ValueError, match="identificadores únicos"):
+        split_by_vehicle([1, 1], [0, 1])
+
+
+def test_split_rejects_invalid_event_flags():
+    with pytest.raises(ValueError, match="somente 0 e 1"):
+        split_by_vehicle([1, 2], [0, 2])
+
+
 def test_assert_no_overlap_raises():
     with pytest.raises(AssertionError, match="train/val"):
         _assert_no_overlap([1, 2], [2, 3], [4, 5])

@@ -1,29 +1,14 @@
-# Estimativa de Custos Cloud (PoC)
+# Recursos e limites de execução
 
-> Estimativas aproximadas para uso pontual em PoC. Revisar antes de escalar.
-> Preços baseados em us-east-1, outubro 2026.
+O caminho pessoal desta PoC usa Databricks Free Edition e armazenamento gerenciado pelo Unity Catalog, sem bucket S3 ou cluster provisionado pelo usuário. Não há estimativa numérica de custo; a Free Edition é limitada por quotas e os ~1,5 GB referem-se apenas aos CSVs Raw, não às cópias Delta geradas.
 
-## AWS S3
+## Itens a acompanhar
 
-| Item | Volume | Estimativa/mês |
-|------|--------|---------------|
-| Dataset Raw (~50 MB) | 0,05 GB | < $0,01 |
-| Silver + Gold (Delta) ~200 MB | 0,2 GB | < $0,01 |
-| Transferência de dados | Negligível para PoC | < $0,01 |
-| **Total S3** | | **< $1/mês** |
+| Componente | Consideração |
+|---|---|
+| Volume Raw | Tamanho dos oito arquivos e disponibilidade do volume após upload. |
+| Tabelas Delta | Bronze e Silver materializam cópias; Gold acrescenta snapshots e features. Espaço total supera o Raw. |
+| Compute serverless | Quota diária/uso justo da Free Edition; uma execução longa pode ser pausada até a quota renovar. |
+| Upload | Transferência dos CSVs locais (~1,5 GB) para o volume UC; limite UI documentado de 5 GB por arquivo. |
 
-## Databricks
-
-| Cenário | Estimativa |
-|---------|-----------|
-| Community Edition (gratuito, sem jobs) | $0 |
-| Trial ou workspace pago — exploração (4h, cluster pequeno) | $2–8 |
-| Trial — treinamento de modelos (2h) | $1–4 |
-| **Total Databricks (PoC pontual)** | **$0–15** |
-
-## Notas
-- **Databricks Community Edition** é gratuito mas não suporta jobs agendados — suficiente para PoC interativa
-- Usar **Spot Instances** no cluster para reduzir custo em ~70%
-- Desligar clusters imediatamente após uso
-- Custos reais dependem da configuração do workspace e região AWS
-- Para entrevista/demonstração: Community Edition elimina custo Databricks
+Execute notebooks em sequência e confira o estado depois de cada camada. A execução completa no dataset só será considerada validada depois de concluída no workspace. Se migrar para workspace pago ou cloud externa, estimar compute, armazenamento e transferência com preços vigentes antes de executar.

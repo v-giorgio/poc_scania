@@ -12,9 +12,9 @@
 # MAGIC
 # MAGIC ### Opção A: Batch Scoring (recomendado para PoC)
 # MAGIC - Databricks Job agendado (ex: diário ou por turno)
-# MAGIC - Lê dados novos do S3 Gold
+# MAGIC - Lê dados novos da tabela UC Gold
 # MAGIC - Aplica modelo carregado do MLflow Model Registry
-# MAGIC - Grava predições em S3 ou banco de dados
+# MAGIC - Grava predições em uma tabela UC ou destino definido pelo consumidor
 # MAGIC - **Vantagem:** simples, barato, sem cluster always-on
 # MAGIC
 # MAGIC ### Opção B: Endpoint REST (produção futura)

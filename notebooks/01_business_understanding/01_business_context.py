@@ -1,53 +1,32 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 1.1 Contexto de Negócio
+# MAGIC # 1.1 Entendimento do negócio — Component X
 # MAGIC
-# MAGIC **Objetivo:** Definir o problema de negócio, critérios de sucesso e restrições.
-# MAGIC
-# MAGIC **Inputs:** Nenhum (análise qualitativa)
-# MAGIC
-# MAGIC **Outputs:** Entendimento documentado do problema — base para todas as etapas seguintes
+# MAGIC **Pergunta analítica:** usando somente leituras disponíveis até um instante,
+# MAGIC qual a distribuição do tempo/unidades residuais até o primeiro reparo
+# MAGIC observado do Component X?
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Problema de Negócio
+# MAGIC ## Escopo e limites
 # MAGIC
-# MAGIC Falhas no sistema de pressão de ar (APS) de caminhões Scania causam paradas não planejadas,
-# MAGIC gerando custos elevados de reparo, perda de produtividade e impacto na cadeia logística.
+# MAGIC O dataset documenta reparos observados do Component X, incluindo veículos
+# MAGIC sem reparo observado durante o acompanhamento (censura à direita). Não há
+# MAGIC evidência para chamar todo reparo de falha física, generalizar para outros
+# MAGIC componentes ou afirmar causalidade, segurança ou desempenho produtivo.
 # MAGIC
-# MAGIC **Objetivo do modelo:** classificar veículos com risco de falha no APS antes que a falha ocorra,
-# MAGIC permitindo manutenção preventiva e reduzindo paradas inesperadas.
+# MAGIC Priorização de inspeções, disponibilidade e economia são hipóteses de valor
+# MAGIC que exigem validação com stakeholders; não são resultados desta PoC.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Custo Assimétrico de Classificação
+# MAGIC ## Critérios de avaliação
 # MAGIC
-# MAGIC O dataset original define uma função de custo explícita:
-# MAGIC
-# MAGIC | Tipo de Erro | Significado | Custo Unitário |
-# MAGIC |-------------|-------------|---------------|
-# MAGIC | Falso Positivo | Manutenção desnecessária | 10 |
-# MAGIC | Falso Negativo | Falha não detectada, veículo quebra em campo | 500 |
-# MAGIC
-# MAGIC **Custo total = 10 × FP + 500 × FN**
-# MAGIC
-# MAGIC Minimizar este custo é o critério primário de avaliação.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Critérios de Sucesso
-# MAGIC
-# MAGIC | Métrica | Threshold |
-# MAGIC |---------|-----------|
-# MAGIC | AUC-ROC | > 0.85 |
-# MAGIC | Custo total | < baseline (classificar tudo como negativo) |
-# MAGIC | Pipeline | Reproduzível e documentado |
-# MAGIC
-# MAGIC ## Contexto de Frotas Conectadas
-# MAGIC
-# MAGIC Em um cenário como Michelin Connected Fleet, os dados de sensores chegam continuamente
-# MAGIC de múltiplos veículos. A arquitetura desta PoC (S3 + Databricks + Delta Lake) é
-# MAGIC diretamente aplicável a esse contexto de dados em escala.
+# MAGIC - Sobrevivência: discriminação, Brier com ponderação de censura e calibração
+# MAGIC   em horizontes com suporte.
+# MAGIC - RUL: métricas condicionais somente aos veículos com primeiro reparo observado.
+# MAGIC - Ordinal: custo oficial de cinco classes, balanced accuracy, macro-F1 e recall
+# MAGIC   por classe, usando a validação oficial apenas na etapa final.
+# MAGIC - Split por veículo e corte estritamente anterior ao evento/fim de acompanhamento.

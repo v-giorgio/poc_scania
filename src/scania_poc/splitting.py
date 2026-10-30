@@ -23,6 +23,10 @@ def split_by_vehicle(
         raise ValueError(f"Ratios devem somar 1.0, mas somam {sum(ratios)}")
     if len(vehicle_ids) != len(event_flags):
         raise ValueError("vehicle_ids e event_flags devem ter o mesmo tamanho")
+    if len(vehicle_ids) != len(set(vehicle_ids)):
+        raise ValueError("vehicle_ids deve conter somente identificadores únicos")
+    if any(flag not in (0, 1) for flag in event_flags):
+        raise ValueError("event_flags deve conter somente 0 e 1")
 
     rng = random.Random(seed)
 
@@ -35,7 +39,7 @@ def split_by_vehicle(
     test_ids: list[int] = []
 
     for flag, ids in strata.items():
-        ids_shuffled = ids[:]
+        ids_shuffled = sorted(ids)
         rng.shuffle(ids_shuffled)
         n = len(ids_shuffled)
         n_train = round(n * ratios[0])
